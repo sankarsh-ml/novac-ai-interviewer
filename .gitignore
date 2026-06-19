@@ -1,0 +1,43 @@
+# Python virtual environment
+venv/
+env/
+.venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Environment variables
+.env
+.env.local
+
+# FastAPI / backend logs
+*.log
+
+# Uploaded resumes / user files
+backend/app/storage/resumes/*
+!backend/app/storage/resumes/.gitkeep
+
+# Node / React frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Build files
+build/
+dist/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp

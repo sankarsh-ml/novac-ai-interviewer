@@ -30,6 +30,8 @@ backend/app/storage/live_frames/*
 !backend/app/storage/aadhaar_photos/.gitkeep
 !backend/app/storage/resume_photos/.gitkeep
 !backend/app/storage/live_frames/.gitkeep
+!backend/app/storage/applications.json
+!backend/app/storage/jobs.json
 
 # Node / React frontend
 frontend/node_modules/

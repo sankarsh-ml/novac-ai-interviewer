@@ -1,9 +1,13 @@
 const API_BASE_URL = "http://127.0.0.1:8000";
 
 
-export async function uploadResume(file) {
+export async function uploadResume(file, jobId = "") {
   const formData = new FormData();
-  formData.append("resume_file", file);
+  formData.append("file", file);
+
+  if (jobId) {
+    formData.append("job_id", jobId);
+  }
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/resume/upload`, {

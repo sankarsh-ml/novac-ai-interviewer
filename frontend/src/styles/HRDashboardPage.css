@@ -1,0 +1,96 @@
+.hr-page {
+  min-height: 100vh;
+  padding: 28px 16px 48px;
+}
+
+.hr-container {
+  width: min(1100px, 100%);
+  margin: 0 auto;
+}
+
+.hr-header {
+  margin: 28px 0 24px;
+}
+
+.hr-header h1 {
+  margin: 0;
+  color: #111827;
+  font-size: clamp(2rem, 5vw, 3rem);
+}
+
+.hr-panel {
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 24px;
+  box-shadow: 0 14px 35px rgba(20, 32, 51, 0.07);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hr-input,
+.hr-textarea {
+  width: 100%;
+  border: 1px solid #cdd8e7;
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.hr-textarea {
+  min-height: 180px;
+  resize: vertical;
+}
+
+.hr-button {
+  align-self: flex-start;
+  border: 0;
+  border-radius: 8px;
+  background: #1f6fe5;
+  color: #ffffff;
+  padding: 14px 28px;
+  font-size: 1rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.hr-button:hover {
+  opacity: 0.95;
+}
+
+.jobs-section {
+  margin-top: 24px;
+}
+
+.jobs-list {
+  margin-top: 16px;
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 20px;
+}
+
+.job-card {
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.job-card h3 {
+  margin: 0 0 10px;
+  color: #111827;
+}
+
+.job-card p {
+  margin: 0 0 10px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.job-card small {
+  color: #64748b;
+}

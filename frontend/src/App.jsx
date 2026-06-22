@@ -3,6 +3,7 @@ import { useState } from "react";
 import AadhaarUploadPage from "./pages/AadhaarUploadPage.jsx";
 import AtsScreeningPage from "./pages/AtsScreeningPage.jsx";
 import HomePage from "./pages/HomePage.jsx";
+import HRDashboardPage from "./pages/HRDashboardPage.jsx";
 import InterviewPage from "./pages/InterviewPage.jsx";
 import StudentUploadPage from "./pages/StudentUploadPage.jsx";
 
@@ -60,7 +61,16 @@ function App() {
     );
   }
 
-  return <HomePage onOpenStudent={() => setCurrentPage("student")} />;
+  if (currentPage === "admin") {
+    return <HRDashboardPage onBack={handleBackHome} />;
+  }
+
+  return (
+    <HomePage
+      onOpenStudent={() => setCurrentPage("student")}
+      onOpenAdmin={() => setCurrentPage("admin")}
+    />
+  );
 }
 
 

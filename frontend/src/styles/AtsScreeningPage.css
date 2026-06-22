@@ -86,6 +86,66 @@
   background: #c2413b;
 }
 
+.result-banner {
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  padding: 18px;
+  margin: 18px 0;
+}
+
+.result-banner h2 {
+  margin: 0 0 8px;
+}
+
+.result-banner p {
+  margin: 0;
+}
+
+.result-banner.passed {
+  border-color: #9ed7b5;
+  background: #f0fff6;
+  color: #116239;
+}
+
+.result-banner.failed {
+  border-color: #f1b8b8;
+  background: #fff4f4;
+  color: #9f1c16;
+}
+
+.skills-section {
+  margin: 18px 0;
+}
+
+.skills-section h2 {
+  margin: 0 0 12px;
+  color: #111827;
+  font-size: 1.15rem;
+}
+
+.skill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.skill-chip {
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.skill-chip.matched {
+  background: #e9f8f1;
+  color: #177452;
+}
+
+.skill-chip.missing {
+  background: #fff4f4;
+  color: #b42318;
+}
+
 .decision-button:disabled {
   background: #94a9c4;
   cursor: not-allowed;

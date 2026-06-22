@@ -39,6 +39,38 @@
   box-shadow: 0 14px 35px rgba(20, 32, 51, 0.07);
 }
 
+.job-selection {
+  grid-column: 1 / -1;
+}
+
+.job-selection h2 {
+  margin: 0 0 14px;
+  color: #111827;
+  font-size: 1.15rem;
+}
+
+.job-option {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.job-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.job-option small {
+  color: #64748b;
+  line-height: 1.4;
+}
+
 .file-input-label {
   min-height: 52px;
   border: 1px dashed #9baec8;

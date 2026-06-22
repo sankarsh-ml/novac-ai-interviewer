@@ -1,11 +1,7 @@
 import "../styles/HomePage.css";
 
 
-function HomePage({ onOpenStudent }) {
-  const handleAdminClick = () => {
-    alert("Admin portal coming soon");
-  };
-
+function HomePage({ onOpenStudent, onOpenAdmin }) {
   return (
     <main className="home-page">
       <section className="home-content">
@@ -19,7 +15,7 @@ function HomePage({ onOpenStudent }) {
             <span>Student</span>
           </button>
 
-          <button className="role-card" type="button" onClick={handleAdminClick}>
+          <button className="role-card" type="button" onClick={onOpenAdmin}>
             <span className="role-letter admin">A</span>
             <span>Admin</span>
           </button>

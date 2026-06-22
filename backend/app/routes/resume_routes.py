@@ -1,9 +1,10 @@
 from pathlib import Path
+from typing import Optional
 import uuid
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from app.services.db_service import MongoConnectionError, save_resume_application
+from app.services.db_service import save_resume_application
 from app.services.resume_parser import (
     clean_text,
     extract_candidate_name,
@@ -68,23 +69,31 @@ async def _process_resume_upload(file: UploadFile):
 
 
 @router.post("/upload")
-async def upload_resume(resume_file: UploadFile = File(...)):
-    resume_data = await _process_resume_upload(resume_file)
+async def upload_resume(
+    resume_file: Optional[UploadFile] = File(None),
+    file: Optional[UploadFile] = File(None),
+    job_id: str | None = Form(None),
+):
+    upload_file = resume_file or file
+
+    if not upload_file:
+        raise HTTPException(status_code=400, detail="Resume file is required")
+
+    resume_data = await _process_resume_upload(upload_file)
     resume_summary = resume_data["resume"]
 
-    try:
-        application_id = save_resume_application(
-            {
-                **resume_data,
-                "ats_status": "pending",
-                "aadhaar_verification": _default_aadhaar_verification(),
-            }
-        )
-    except MongoConnectionError as exc:
-        raise HTTPException(
-            status_code=500,
-            detail="MongoDB connection failed. Make sure MongoDB is running.",
-        ) from exc
+    application_id = save_resume_application(
+        {
+            **resume_data,
+            "job_id": job_id,
+            "ats_ready_data": resume_summary["ats_ready_data"],
+            "candidate_name": resume_summary["candidate_name"],
+            "resume_photo_path": resume_summary["resume_photo_path"],
+            "ats_status": "pending",
+            "aadhaar_verification": _default_aadhaar_verification(),
+            "kyc_verification": _default_aadhaar_verification(),
+        }
+    )
 
     return {
         "success": True,
@@ -92,6 +101,7 @@ async def upload_resume(resume_file: UploadFile = File(...)):
         "data": {
             "application_id": application_id,
             "file_name": resume_data["file_name"],
+            "job_id": job_id,
             "resume_name": resume_summary["candidate_name"],
             "total_pages": resume_summary["total_pages"],
             "text_length": resume_summary["text_length"],

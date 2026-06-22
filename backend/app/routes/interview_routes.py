@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import JSONResponse
 
-from app.services.db_service import MongoConnectionError, get_resume_application
+from app.services.db_service import get_resume_application
 from app.services.face_verification_service import (
     DEFAULT_FACE_VERIFY_THRESHOLD,
     get_dependency_status,
@@ -92,18 +92,6 @@ async def face_verify(application_id: str, frame: UploadFile = File(...)):
         print(f"[Interview face-verify] face_verification_result={result}")
 
         return JSONResponse(status_code=200, content=result)
-
-    except MongoConnectionError:
-        return JSONResponse(
-            status_code=500,
-            content={
-                "success": False,
-                "match": False,
-                "score": 0.0,
-                "threshold": DEFAULT_FACE_VERIFY_THRESHOLD,
-                "message": "MongoDB connection failed. Make sure MongoDB is running.",
-            },
-        )
 
     except Exception as error:
         print("\n========== INTERVIEW FACE VERIFY CRASH ==========")

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.routes.ats_routes import router as ats_router
 from app.routes.interview_routes import router as interview_router
+from app.routes.job_routes import router as job_router
 from app.routes.kyc_routes import router as kyc_router
 from app.routes.resume_routes import router as resume_router
 
@@ -25,6 +26,7 @@ app.include_router(resume_router, prefix="/api/resume", tags=["Resume"])
 app.include_router(ats_router, prefix="/api/ats", tags=["ATS"])
 app.include_router(kyc_router, prefix="/api/kyc", tags=["KYC"])
 app.include_router(interview_router, prefix="/api/interview", tags=["Interview"])
+app.include_router(job_router, prefix="/api/hr", tags=["HR"])
 
 
 @app.get("/")

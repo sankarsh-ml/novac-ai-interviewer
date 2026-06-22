@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 import fitz
 
@@ -178,6 +179,48 @@ def normalize_text(text):
 
 def clean_text(text: str):
     return normalize_text(text)
+
+
+def extract_candidate_name(text: str) -> str:
+    for line in get_clean_lines(text):
+        if _looks_like_candidate_name(line):
+            return line
+    return ""
+
+
+def extract_resume_photo(file_path: str, output_dir: str) -> dict:
+    output_path = None
+    document = fitz.open(file_path)
+
+    try:
+        for page_index in range(document.page_count):
+            page = document[page_index]
+            for image_index, image in enumerate(page.get_images(full=True)):
+                xref = image[0]
+                image_info = document.extract_image(xref)
+                image_bytes = image_info.get("image")
+                extension = image_info.get("ext", "png")
+
+                if not image_bytes or len(image_bytes) < 5000:
+                    continue
+
+                output_directory = Path(output_dir)
+                output_directory.mkdir(parents=True, exist_ok=True)
+                output_path = output_directory / f"resume_photo_page_{page_index + 1}_{image_index + 1}.{extension}"
+                output_path.write_bytes(image_bytes)
+                return {
+                    "available": True,
+                    "path": str(output_path),
+                    "message": "Resume photo extracted",
+                }
+    finally:
+        document.close()
+
+    return {
+        "available": False,
+        "path": None,
+        "message": "Resume photo not found",
+    }
 
 
 def get_clean_lines(text):
@@ -928,3 +971,26 @@ def _normalize_header(line):
 
 def _strip_bullet(line):
     return BULLET_PATTERN.sub("", line.strip()).strip()
+
+
+def _looks_like_candidate_name(line):
+    if not line or len(line.split()) > 5:
+        return False
+    if any(char.isdigit() for char in line):
+        return False
+    if "@" in line or LINK_PATTERN.search(line):
+        return False
+
+    blocked = {
+        "education",
+        "skills",
+        "projects",
+        "experience",
+        "certifications",
+        "resume",
+        "find me online",
+    }
+    if _normalize_header(line) in blocked:
+        return False
+
+    return bool(re.search(r"[A-Za-z]{2,}", line))

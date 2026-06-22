@@ -35,5 +35,6 @@ def save_ats_decision(application_id: str, request: AtsDecisionRequest):
         "data": {
             "application_id": application_id,
             "ats_status": decision,
+            "next_step": "aadhaar_verification" if decision == "passed" else "stop",
         },
     }

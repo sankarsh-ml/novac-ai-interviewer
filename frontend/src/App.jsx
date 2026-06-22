@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import AadhaarUploadPage from "./pages/AadhaarUploadPage.jsx";
 import AtsScreeningPage from "./pages/AtsScreeningPage.jsx";
 import HomePage from "./pages/HomePage.jsx";
 import InterviewPage from "./pages/InterviewPage.jsx";
@@ -9,6 +10,7 @@ import StudentUploadPage from "./pages/StudentUploadPage.jsx";
 function App() {
   const [currentPage, setCurrentPage] = useState("home");
   const [applicationSummary, setApplicationSummary] = useState(null);
+  const [aadhaarSummary, setAadhaarSummary] = useState(null);
 
   const handleUploadSuccess = (summary) => {
     setApplicationSummary(summary);
@@ -17,6 +19,7 @@ function App() {
 
   const handleBackHome = () => {
     setApplicationSummary(null);
+    setAadhaarSummary(null);
     setCurrentPage("home");
   };
 
@@ -29,13 +32,32 @@ function App() {
       <AtsScreeningPage
         applicationSummary={applicationSummary}
         onBackHome={handleBackHome}
-        onPassed={() => setCurrentPage("interview")}
+        onPassed={() => setCurrentPage("aadhaar")}
+      />
+    );
+  }
+
+  if (currentPage === "aadhaar") {
+    return (
+      <AadhaarUploadPage
+        applicationSummary={applicationSummary}
+        onBackHome={handleBackHome}
+        onVerified={(summary) => {
+          setAadhaarSummary(summary);
+          setCurrentPage("interview");
+        }}
       />
     );
   }
 
   if (currentPage === "interview") {
-    return <InterviewPage onBackHome={handleBackHome} />;
+    return (
+      <InterviewPage
+        applicationSummary={applicationSummary}
+        aadhaarSummary={aadhaarSummary}
+        onBackHome={handleBackHome}
+      />
+    );
   }
 
   return <HomePage onOpenStudent={() => setCurrentPage("student")} />;

@@ -78,6 +78,27 @@ def update_ats_status(application_id: str, status: str) -> bool:
     return result.matched_count == 1
 
 
+def update_kyc_verification(application_id: str, aadhaar_verification: dict) -> bool:
+    if not ObjectId.is_valid(application_id):
+        return False
+
+    try:
+        _check_mongo_connection()
+        result = resume_applications.update_one(
+            {"_id": ObjectId(application_id)},
+            {
+                "$set": {
+                    "aadhaar_verification": aadhaar_verification,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+    except (ServerSelectionTimeoutError, PyMongoError) as exc:
+        raise MongoConnectionError from exc
+
+    return result.matched_count == 1
+
+
 def _check_mongo_connection():
     client.admin.command("ping")
 

@@ -1,10 +1,12 @@
 # Python virtual environment
 venv/
+id_venv/
 env/
 .venv/
 
 # Python cache files
 __pycache__/
+**/__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -19,7 +21,15 @@ __pycache__/
 
 # Uploaded resumes / user files
 backend/app/storage/resumes/*
+backend/app/storage/aadhaar/*
+backend/app/storage/aadhaar_photos/*
+backend/app/storage/resume_photos/*
+backend/app/storage/live_frames/*
 !backend/app/storage/resumes/.gitkeep
+!backend/app/storage/aadhaar/.gitkeep
+!backend/app/storage/aadhaar_photos/.gitkeep
+!backend/app/storage/resume_photos/.gitkeep
+!backend/app/storage/live_frames/.gitkeep
 
 # Node / React frontend
 frontend/node_modules/

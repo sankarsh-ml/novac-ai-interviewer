@@ -3,16 +3,20 @@ import sys
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-from app.services.db_service import get_resume_application
+from app.services.answer_evaluation_service import evaluate_answer_with_qwen
+from app.services.db_service import get_resume_application, update_application
 from app.services.face_verification_service import (
     DEFAULT_FACE_VERIFY_THRESHOLD,
     get_dependency_status,
     get_face_app,
     verify_faces,
 )
+from app.services.question_generation_service import generate_interview_questions
+from app.services.qwen_service import is_qwen_available
 
 
 router = APIRouter()
@@ -21,6 +25,11 @@ APP_DIR = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LIVE_FRAME_DIR = APP_DIR / "storage" / "live_frames"
 LIVE_FRAME_DIR.mkdir(parents=True, exist_ok=True)
+
+
+class AnswerEvaluationRequest(BaseModel):
+    question_id: str
+    answer_text: str
 
 
 @router.post("/face-verify/{application_id}")
@@ -140,6 +149,92 @@ def face_health():
     return JSONResponse(status_code=200, content=response)
 
 
+@router.get("/qwen-health")
+def qwen_health():
+    result = is_qwen_available()
+
+    if result.get("success"):
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "qwen_available": True,
+                "model": result.get("model"),
+                "base_url": result.get("base_url"),
+            },
+        )
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "success": False,
+            "qwen_available": False,
+            "message": result.get("message", "Qwen unavailable"),
+            "model": result.get("model"),
+            "base_url": result.get("base_url"),
+        },
+    )
+
+
+@router.get("/questions/{application_id}")
+def get_interview_questions(application_id: str):
+    application = get_resume_application(application_id)
+
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    existing_questions = application.get("interview_questions")
+
+    if isinstance(existing_questions, dict) and _has_current_question_contract(existing_questions):
+        return existing_questions
+
+    result = generate_interview_questions(application)
+    update_application(application_id, {"interview_questions": result})
+    return result
+
+
+@router.post("/questions/{application_id}/regenerate")
+def regenerate_interview_questions(application_id: str):
+    application = get_resume_application(application_id)
+
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    result = generate_interview_questions(application)
+    update_application(application_id, {"interview_questions": result})
+    return result
+
+
+@router.post("/questions/{application_id}/evaluate")
+def evaluate_interview_answer(application_id: str, request: AnswerEvaluationRequest):
+    application = get_resume_application(application_id)
+
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    question = _find_question(application, request.question_id)
+
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    evaluation = evaluate_answer_with_qwen(application, question, request.answer_text)
+    answer_record = {
+        "question_id": request.question_id,
+        "answer_text": request.answer_text,
+        "evaluation": evaluation,
+    }
+
+    interview_answers = application.get("interview_answers")
+
+    if not isinstance(interview_answers, dict):
+        interview_answers = {}
+
+    interview_answers[request.question_id] = answer_record
+    update_application(application_id, {"interview_answers": interview_answers})
+
+    return evaluation
+
+
 def _find_reference_face_path(application: dict):
     resume_candidates = [
         application.get("resume_photo_path"),
@@ -225,3 +320,42 @@ def _record_checked_path(checked_paths, source, original_path, resolved_path, ex
             "exists": exists,
         }
     )
+
+
+def _find_question(application: dict, question_id: str) -> dict | None:
+    question_payload = application.get("interview_questions") or {}
+    questions = question_payload.get("questions") if isinstance(question_payload, dict) else []
+
+    if not isinstance(questions, list):
+        return None
+
+    for question in questions:
+        if isinstance(question, dict) and str(question.get("id")) == str(question_id):
+            return question
+
+    return None
+
+
+def _has_current_question_contract(question_payload: dict) -> bool:
+    questions = question_payload.get("questions")
+
+    if not isinstance(questions, list) or len(questions) != 5:
+        return False
+
+    difficulty_counts = {"Easy": 0, "Medium": 0, "Hard": 0}
+
+    for index, question in enumerate(questions, start=1):
+        if not isinstance(question, dict):
+            return False
+
+        if question.get("id") != f"q{index}":
+            return False
+
+        difficulty = question.get("difficulty")
+
+        if difficulty not in difficulty_counts:
+            return False
+
+        difficulty_counts[difficulty] += 1
+
+    return difficulty_counts == {"Easy": 2, "Medium": 2, "Hard": 1}

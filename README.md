@@ -79,3 +79,33 @@ http://127.0.0.1:8000/api/interview/face-health
 Expected: `success` is `true` and `face_app` is `initialized`.
 
 If `success` is `false`, read the exact `error` field.
+
+## Qwen setup
+
+Qwen is used as the local interview intelligence layer for resume understanding,
+personalized question generation, and typed answer evaluation. Specialized
+models still handle face verification and Aadhaar validation.
+
+1. Install Ollama.
+2. Pull Qwen:
+
+```bat
+ollama pull qwen2.5:7b
+```
+
+3. Start Ollama.
+4. Test Qwen health:
+
+```text
+http://127.0.0.1:8000/api/interview/qwen-health
+```
+
+Configure Qwen in `.env`:
+
+```env
+QWEN_BASE_URL=http://127.0.0.1:11434
+QWEN_MODEL=qwen2.5:7b
+USE_QWEN=true
+```
+
+If Qwen is unavailable, the backend falls back to rule-based question generation.

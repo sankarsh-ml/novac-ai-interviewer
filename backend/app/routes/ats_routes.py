@@ -5,6 +5,7 @@ from app.services.ats_engine import calculate_ats
 from app.services.db_service import (
     get_application_by_id,
     get_job_by_id,
+    update_application,
     update_ats_decision,
 )
 
@@ -43,7 +44,17 @@ def score_resume(application_id: str):
 
     result = calculate_ats(resume_data, job)
     decision = result.get("status") or ("passed" if result.get("passed") else "failed")
-    update_ats_decision(application_id, decision)
+    update_application(
+        application_id,
+        {
+            "ats_status": decision,
+            "ats_decision": decision,
+            "ats_result": result,
+            "ats_score": result.get("ats_score"),
+            "matched_skills": result.get("matched_skills", []),
+            "missing_skills": result.get("missing_skills", []),
+        },
+    )
 
     return {
         "success": True,

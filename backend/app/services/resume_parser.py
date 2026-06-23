@@ -255,7 +255,10 @@ def extract_sections(text: str):
 
     current_section = None
     lines = merge_wrapped_lines(get_clean_lines(text))
-
+    print("\n===== CLEAN LINES =====")
+    for line in lines[:100]:
+        print(line)
+    print("=======================\n")
     for line in lines:
         normalized_header = _normalize_header(line)
         if normalized_header in SECTION_HEADERS:
@@ -965,9 +968,34 @@ def _detect_technologies(text):
 
 def _normalize_header(line):
     line = _strip_bullet(line).rstrip(":").lower()
-    line = re.sub(r"[^a-z ]", "", line)
-    return re.sub(r"\s+", " ", line).strip()
 
+    line = re.sub(r"[^a-z ]", "", line)
+
+    line = re.sub(r"\s+", " ", line).strip()
+
+    words = line.split()
+
+    if len(words) >= 2:
+        reconstructed = "".join(words)
+
+        known_headers = {
+            "education",
+            "technicalskills",
+            "skills",
+            "experience",
+            "projects",
+            "certifications",
+            "achievements",
+            "leadership",
+        }
+
+        if reconstructed in known_headers:
+            return reconstructed.replace(
+                "technicalskills",
+                "technical skills"
+            )
+
+    return line
 
 def _strip_bullet(line):
     return BULLET_PATTERN.sub("", line.strip()).strip()

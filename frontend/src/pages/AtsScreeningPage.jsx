@@ -76,60 +76,55 @@ function AtsScreeningPage({ applicationSummary, onBackHome, onPassed }) {
             Back Home
           </button>
         </section>
-      </main>
+        </main>
     );
   }
 
-  const atsScore = getAtsScore(atsResult);
-  const matchedSkills = getMatchedSkills(atsResult);
-  const missingSkills = getMissingSkills(atsResult);
   const passed = getAtsPassed(atsResult);
-  console.log("Computed pass:", passed);
-
   return (
     <main className="ats-page">
       <section className="ats-panel">
-        <p className="eyebrow">Screening Pipeline</p>
-        <h1>ATS Screening Result</h1>
 
-        <div className="ats-summary-grid">
-          <SummaryItem label="Candidate" value={atsResult?.candidate_name || "--"} />
-          <SummaryItem label="ATS Score" value={`${atsScore}%`} />
-          <SummaryItem label="Matched Skills" value={matchedSkills.length} />
-          <SummaryItem label="Missing Skills" value={missingSkills.length} />
-        </div>
+        {passed ? (
+          <>
+            <h1>🎉 Congratulations!</h1>
 
-        <div className={`result-banner ${passed ? "passed" : "failed"}`}>
-          <h2>{passed ? "ATS Passed" : "ATS Failed"}</h2>
-          <p>
-            ATS Score: <strong>{atsScore}%</strong>
-          </p>
-        </div>
+            <p className="ats-message">
+              Your resume has successfully cleared the ATS screening stage.
+            </p>
 
-        <SkillsSection
-          title="Matched Skills"
-          skills={matchedSkills}
-          className="matched"
-          emptyText="No matched skills"
-        />
-        <SkillsSection
-          title="Missing Skills"
-          skills={missingSkills}
-          className="missing"
-          emptyText="No missing skills"
-        />
+            <p className="ats-message">
+              You may proceed to Aadhaar verification.
+            </p>
 
-        <div className="decision-actions">
-          {passed ? (
-            <button className="decision-button passed" type="button" onClick={onPassed}>
-              Continue to Aadhaar
+            <button
+              className="decision-button passed"
+              onClick={onPassed}
+            >
+              Continue
             </button>
-          ) : (
-            <button className="decision-button failed" type="button" onClick={onBackHome}>
+          </>
+        ) : (
+          <>
+            <h1>Application Not Shortlisted</h1>
+
+            <p className="ats-message">
+              Thank you for applying.
+            </p>
+
+            <p className="ats-message">
+              Your profile did not meet the current requirements for this role.
+            </p>
+
+            <button
+              className="decision-button failed"
+              onClick={onBackHome}
+            >
               Back Home
             </button>
-          )}
-        </div>
+          </>
+        )}
+
       </section>
     </main>
   );

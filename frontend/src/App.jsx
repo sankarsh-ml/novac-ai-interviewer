@@ -6,13 +6,15 @@ import HomePage from "./pages/HomePage.jsx";
 import HRDashboardPage from "./pages/HRDashboardPage.jsx";
 import InterviewPage from "./pages/InterviewPage.jsx";
 import StudentUploadPage from "./pages/StudentUploadPage.jsx";
-
+import HRHomePage from "./pages/HRHomePage.jsx";
+import CurrentJobsPage from "./pages/CurrentJobsPage.jsx";
+import JobApplicationsPage from "./pages/JobApplicationsPage.jsx";
 
 function App() {
   const [currentPage, setCurrentPage] = useState("home");
   const [applicationSummary, setApplicationSummary] = useState(null);
   const [aadhaarSummary, setAadhaarSummary] = useState(null);
-
+  const [selectedJob,setSelectedJob] =useState(null);
   const handleUploadSuccess = (summary) => {
     setApplicationSummary(summary);
     setCurrentPage("ats");
@@ -62,9 +64,54 @@ function App() {
   }
 
   if (currentPage === "admin") {
-    return <HRDashboardPage onBack={handleBackHome} />;
+    return (
+      <HRHomePage
+        onBack={handleBackHome}
+        onOpenAddJob={() =>
+          setCurrentPage("add-job")
+        }
+        onOpenCurrentJobs={() =>
+          setCurrentPage("current-jobs")
+        }
+      />
+    );
   }
 
+  if (currentPage === "add-job") {
+    return (
+      <HRDashboardPage
+        onBack={() =>
+          setCurrentPage("admin")
+        }
+      />
+    );
+  }
+
+  if (currentPage === "current-jobs") {
+  return (
+    <CurrentJobsPage
+      onBack={() =>
+        setCurrentPage("admin")
+      }
+      onViewApplications={(job) => {
+        setSelectedJob(job);
+        setCurrentPage("job-applications");
+      }}
+    />
+  );
+}
+
+  if (currentPage === "job-applications") {
+    return (
+      <JobApplicationsPage
+        job={selectedJob}
+        onBack={() =>
+          setCurrentPage("current-jobs")
+        }
+      />
+    );
+  }
+  
   return (
     <HomePage
       onOpenStudent={() => setCurrentPage("student")}

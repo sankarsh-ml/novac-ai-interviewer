@@ -14,17 +14,18 @@ router = APIRouter()
 
 class JobRequest(BaseModel):
     title: str
+    description: str
     required_skills: list[str]
     education: str
     experience: int
     keywords: list[str]
-
 
 @router.post("/jobs")
 def create_job(job: JobRequest):
     job_id = save_job(
         {
             "title": job.title,
+            "description": job.description,
             "required_skills": job.required_skills,
             "education": job.education,
             "experience": job.experience,
@@ -65,4 +66,20 @@ def fetch_application(application_id: str):
     return {
         "success": True,
         "application": application,
+    }
+
+@router.get("/jobs/{job_id}/applications")
+def get_job_applications(job_id: str):
+
+    applications = list_applications()
+
+    filtered = [
+        app
+        for app in applications
+        if app.get("job_id") == job_id
+    ]
+
+    return {
+        "success": True,
+        "applications": filtered
     }

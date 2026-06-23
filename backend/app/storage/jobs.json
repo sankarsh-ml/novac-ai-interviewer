@@ -1,60 +1,66 @@
 [
   {
-    "id": "3e3473f4-0aea-490e-82fe-94d25e4d98c2",
-    "title": "SOFTWARE ENGINEER",
+    "id": "c46fdd23-1ab7-4ffb-a5d1-bfb1e5e977a1",
+    "title": "Python Backend Developer",
+    "description": "We are looking for a Python Backend Developer with experience in FastAPI, REST APIs, SQL databases, and cloud deployment. The candidate should be able to design scalable backend systems, build APIs, integrate databases, and collaborate with frontend teams. Experience with Docker, AWS, and Git is preferred.",
     "required_skills": [
-      "C++",
-      "JAVA",
-      "FLASK",
-      "AI",
-      "ML",
-      "MONGODB",
-      "SQL"
-    ],
-    "education": "Btech",
-    "experience": 2,
-    "keywords": [
-      "Good projects and good skills."
-    ]
-  },
-  {
-    "id": "391f7564-2144-4c5e-bdda-ec479d2a7b15",
-    "title": "AI ML ENGINEER",
-    "required_skills": [
-      "C",
-      "C++",
       "Python",
-      "JavaScript",
-      "Typescript",
-      "React",
-      "Next.js",
-      "MERN",
-      "Tailwind CSS",
-      "Data Structures",
-      "Algorithms",
-      "Operating Systems",
-      "DBMS",
-      "Distributed Systems"
+      "FastAPI",
+      "SQL",
+      "Git",
+      "REST API"
     ],
     "education": "B.Tech",
-    "experience": 0,
+    "experience": 1,
     "keywords": [
-      "Lead",
-      "Head"
+      "backend",
+      "api",
+      "database",
+      "cloud",
+      "docker",
+      "aws"
     ]
   },
   {
-    "id": "c7469901-9585-4c0c-8770-9e2216e1da22",
-    "title": "DBMS MANAGER",
+    "id": "40046851-b12c-4062-a173-4cf03c514918",
+    "title": "AI Engineer",
+    "description": "Looking for experience in Machine Learning, Deep Learning, Computer Vision, OCR, TensorFlow, PyTorch and Python.",
     "required_skills": [
-      "MONGODB",
-      "SQL",
-      ".NET"
+      "Python",
+      "TensorFlow",
+      "PyTorch",
+      "Computer Vision",
+      "Machine Learning"
     ],
-    "education": "BTECH",
+    "education": "B.Tech",
     "experience": 1,
     "keywords": [
-      "GOOD PROJECTS"
+      "AI",
+      "Deep Learning",
+      "CNN",
+      "OCR",
+      "Computer Vision"
+    ]
+  },
+  {
+    "id": "f004edb6-3937-41d2-ae8e-6dda06c07ca4",
+    "title": "Full Stack Developer",
+    "description": "We are looking for a Full Stack Developer proficient in React, Node.js, MongoDB, and REST API development. The candidate should be comfortable building frontend interfaces, backend services, and integrating databases. Knowledge of cloud deployment and version control is preferred.",
+    "required_skills": [
+      "React",
+      "Node.js",
+      "MongoDB",
+      "JavaScript",
+      "REST API"
+    ],
+    "education": "B.TECH",
+    "experience": 1,
+    "keywords": [
+      "frontend",
+      "backend",
+      "full stack",
+      "web development",
+      "database"
     ]
   }
 ]

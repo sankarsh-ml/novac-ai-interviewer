@@ -10,6 +10,7 @@ function HRDashboardPage({ onBack }) {
   const [experience, setExperience] = useState("");
   const [keywords, setKeywords] = useState("");
   const [jobs, setJobs] = useState([]);
+  const [description, setDescription] = useState("");
 
   useEffect(() => {
     fetchJobs();
@@ -31,6 +32,7 @@ function HRDashboardPage({ onBack }) {
   const addJob = async () => {
     if (
       !title.trim() ||
+      !description.trim() ||
       !skills.trim() ||
       !education.trim() ||
       !experience.trim() ||
@@ -48,6 +50,7 @@ function HRDashboardPage({ onBack }) {
         },
         body: JSON.stringify({
           title,
+          description,
           required_skills: skills
             .split(",")
             .map((skill) => skill.trim())
@@ -65,6 +68,7 @@ function HRDashboardPage({ onBack }) {
 
       if (data.success) {
         setTitle("");
+        setDescription("");
         setSkills("");
         setEducation("");
         setExperience("");
@@ -98,6 +102,13 @@ function HRDashboardPage({ onBack }) {
             value={title}
             onChange={(event) => setTitle(event.target.value)}
           />
+
+            <textarea
+              className="hr-textarea"
+              placeholder="Job Description"
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
 
           <textarea
             className="hr-textarea"
@@ -144,6 +155,11 @@ function HRDashboardPage({ onBack }) {
               jobs.map((job) => (
                 <div key={job.id} className="job-card">
                   <h3>{job.title}</h3>
+                  <p>
+                    <strong>Description:</strong>
+                    {" "}
+                    {job.description}
+                  </p>
                   <p>
                     <strong>Skills:</strong> {job.required_skills?.join(", ")}
                   </p>

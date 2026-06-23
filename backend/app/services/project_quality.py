@@ -1,20 +1,19 @@
 def calculate_project_quality(
     projects,
-    hr_keywords
+    required_skills,
+    keywords,
+    job_title=""
 ):
 
-    # No projects submitted
-
-    if len(projects) == 0:
-
+    if not projects:
         return {
             "score": 0,
             "reason": "No projects found"
         }
 
-    # ------------------------
+    # -------------------------
     # Quantity Score
-    # ------------------------
+    # -------------------------
 
     project_count = len(projects)
 
@@ -22,70 +21,106 @@ def calculate_project_quality(
         quantity_score = 100
 
     elif project_count >= 3:
-        quantity_score = 75
+        quantity_score = 80
 
     else:
-        quantity_score = 50
+        quantity_score = 60
 
-    # ------------------------
-    # Keyword Matching
-    # ------------------------
+    # -------------------------
+    # Build Project Corpus
+    # -------------------------
 
-    matched_keywords = 0
+    project_text = ""
 
     for project in projects:
 
-        project_text = (
-            project.get("title", "")
-            + " "
-            + project.get("description", "")
-        ).lower()
+        project_text += " "
 
-        for keyword in hr_keywords:
+        project_text += project.get(
+            "title",
+            ""
+        )
 
-            if keyword.lower() in project_text:
+        project_text += " "
 
-                matched_keywords += 1
+        project_text += project.get(
+            "description",
+            ""
+        )
 
-    # ------------------------
-    # Quality Score
-    # ------------------------
+        project_text += " "
 
-    if len(hr_keywords) == 0:
+        project_text += " ".join(
+            project.get(
+                "technologies",
+                []
+            )
+        )
 
-        quality_score = 0
+    project_text = project_text.lower()
 
-    else:
+    # -------------------------
+    # Matching Targets
+    # -------------------------
 
-        quality_score = (
-            matched_keywords
-            /
-            len(hr_keywords)
-        ) * 100
+    targets = []
 
-    # Prevent scores > 100
+    targets.extend(required_skills)
+    targets.extend(keywords)
 
-    quality_score = min(
-        quality_score,
-        100
-    )
+    if job_title:
+        targets.append(job_title)
 
-    # ------------------------
+    matched = set()
+
+    for target in targets:
+
+        target = target.lower().strip()
+
+        if not target:
+            continue
+
+        if target in project_text:
+
+            matched.add(target)
+
+    # -------------------------
+    # Relevance Score
+    # -------------------------
+
+    relevance_score = (
+        len(matched)
+        /
+        max(len(targets), 1)
+    ) * 100
+
+    # -------------------------
     # Final Project Score
-    # ------------------------
+    # -------------------------
 
     final_score = (
-        0.4 * quantity_score +
-        0.6 * quality_score
+        0.30 * quantity_score
+        +
+        0.70 * relevance_score
     )
 
     return {
-        "score": round(final_score, 2),
+
+        "score": round(
+            final_score,
+            2
+        ),
+
         "project_count": project_count,
-        "matched_keywords": matched_keywords,
+
+        "matched": list(
+            matched
+        ),
+
         "quantity_score": quantity_score,
-        "quality_score": round(
-            quality_score,
+
+        "relevance_score": round(
+            relevance_score,
             2
         )
     }

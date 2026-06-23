@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from app.services.db_service import update_application
 
 from app.services.ats_engine import calculate_ats
 from app.services.db_service import (
@@ -43,6 +44,31 @@ def score_resume(application_id: str):
 
     result = calculate_ats(resume_data, job)
     decision = result.get("status") or ("passed" if result.get("passed") else "failed")
+    update_application(
+            application_id,
+            {
+                "ats_score":
+                    result.get("atsScore"),
+
+                "semantic_score":
+                    result.get("semantic_score"),
+
+                "skill_score":
+                    result.get("skill_score"),
+
+                "education_score":
+                    result.get("education_score"),
+
+                "experience_score":
+                    result.get("experience_score"),
+
+                "project_score":
+                    result.get("project_score"),
+
+                "ats_status":
+                    decision
+            }
+        )
     update_ats_decision(application_id, decision)
 
     return {

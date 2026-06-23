@@ -62,3 +62,58 @@ function getFaceBackendMessage(data) {
 
   return [...new Set(messages)].join(" ");
 }
+
+
+export async function uploadInterviewAudio(
+  applicationId,
+  audioBlob
+) {
+  const cleanApplicationId = String(applicationId || "").trim();
+
+  if (!cleanApplicationId) {
+    throw new Error("Application ID missing.");
+  }
+
+  if (!audioBlob) {
+    throw new Error("Audio blob missing.");
+  }
+
+  const formData = new FormData();
+
+  formData.append(
+    "audio",
+    audioBlob,
+    "interview.webm"
+  );
+
+  const url =
+    `${API_BASE_URL}/api/interview/upload-audio/${encodeURIComponent(
+      cleanApplicationId
+    )}`;
+
+  let response;
+
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (error) {
+    console.error("[Interview Audio] Upload failed:", error);
+
+    throw new Error(
+      "Could not reach backend for audio upload."
+    );
+  }
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data?.message ||
+      `Audio upload failed. HTTP ${response.status}`
+    );
+  }
+
+  return data;
+}

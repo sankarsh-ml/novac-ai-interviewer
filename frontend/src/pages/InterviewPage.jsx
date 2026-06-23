@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { verifyFaceFrame } from "../api/interviewApi.js";
+import {verifyFaceFrame,uploadInterviewAudio} from "../api/interviewApi.js";
 import "../styles/InterviewPage.css";
 
 
@@ -21,6 +21,11 @@ function InterviewPage({ applicationSummary, onBackHome }) {
   const [isFaceVerified, setIsFaceVerified] = useState(false);
   const [faceReferenceSource, setFaceReferenceSource] = useState("");
   const [faceError, setFaceError] = useState("");
+
+  const [isInterviewRunning, setIsInterviewRunning] = useState(false);
+  const [interviewCompleted, setInterviewCompleted] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
   useEffect(() => {
     return () => {
@@ -74,7 +79,6 @@ function InterviewPage({ applicationSummary, onBackHome }) {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-
     setIsCameraOn(false);
   };
 
@@ -100,6 +104,97 @@ function InterviewPage({ applicationSummary, onBackHome }) {
     setFaceError("");
   };
 
+  const startAudioRecording = () => {
+    console.log("startAudioRecording called");
+    console.log("streamRef.current =", streamRef.current);
+    if (!streamRef.current) return;
+
+    try {
+      audioChunksRef.current = [];
+
+      const recorder = new MediaRecorder(streamRef.current);
+      console.log("Recorder state:",recorder.state);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+          console.log("Chunk received:",event.data.size);
+        }
+      };
+
+      recorder.start(1000);
+
+      mediaRecorderRef.current = recorder;
+
+      console.log("Audio recording started");
+    } catch (error) {
+      console.error("Audio recording failed:", error);
+    }
+  };
+
+  const stopAudioRecording = () => {
+    return new Promise((resolve) => {
+
+      const recorder = mediaRecorderRef.current;
+
+      console.log("Recorder at stop =", recorder);
+
+      if (!recorder) {
+        console.log("Recorder is NULL");
+        resolve(null);
+        return;
+      }
+
+      recorder.onstop = () => {
+        console.log("Chunks =", audioChunksRef.current.length);
+
+        const audioBlob = new Blob(
+          audioChunksRef.current,
+          { type: "audio/webm" }
+        );
+
+        console.log("Blob size =", audioBlob.size);
+
+        resolve(audioBlob);
+      };
+
+      recorder.stop();
+    });
+  };
+
+  const startInterview = () => {
+    console.log("START INTERVIEW CLICKED");
+    console.log("streamRef.current =", streamRef.current);
+
+    startAudioRecording();
+
+    console.log("mediaRecorderRef.current =", mediaRecorderRef.current);
+
+    setIsInterviewRunning(true);
+    setInterviewCompleted(false);
+
+    console.log("Interview started");
+  };
+
+  const endInterview = async () => {
+    const audioBlob = await stopAudioRecording();
+
+    console.log("Interview ended");
+    console.log(audioBlob);
+
+    try {
+      const result = await uploadInterviewAudio(
+        applicationSummary.application_id,
+        audioBlob
+      );
+
+      console.log("Upload success:", result);
+    } catch (error) {
+      console.error("Upload failed:", error);
+    }
+
+    setIsInterviewRunning(false);
+    setInterviewCompleted(true);
+  };
   const captureAndVerifyFaceFrame = async () => {
     if (
       faceVerificationDoneRef.current ||
@@ -243,13 +338,48 @@ function InterviewPage({ applicationSummary, onBackHome }) {
           </div>
           {faceError && <p className="face-error">{faceError}</p>}
         </section>
-
+        
         <section className="interview-placeholder">
-          <p>
-            {isFaceVerified
-              ? "Interview will begin here."
-              : "Face verification is required before the interview can begin."}
-          </p>
+            {!isFaceVerified && (
+              <p>
+                Face verification is required before the interview can begin.
+              </p>
+            )}
+
+            {isFaceVerified && !isInterviewRunning && !interviewCompleted && (
+              <>
+                <p>Face verified successfully.</p>
+
+                <button
+                  className="camera-button start"
+                  type="button"
+                  onClick={startInterview}
+                >
+                  Start Interview
+                </button>
+              </>
+            )}
+
+            {isInterviewRunning && (
+              <>
+                <p>Interview in progress...</p>
+
+                <button
+                  className="camera-button stop"
+                  type="button"
+                  onClick={endInterview}
+                >
+                  End Interview
+                </button>
+              </>
+            )}
+
+            {interviewCompleted && (
+              <p>
+                Interview completed successfully.
+              </p>
+            )}
+
         </section>
       </section>
     </main>

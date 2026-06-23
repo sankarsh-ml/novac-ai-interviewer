@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import JSONResponse
 
+from app.services.whisper_service import transcribe_audio
 from app.services.db_service import get_resume_application
 from app.services.face_verification_service import (
     DEFAULT_FACE_VERIFY_THRESHOLD,
@@ -21,7 +22,10 @@ APP_DIR = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 LIVE_FRAME_DIR = APP_DIR / "storage" / "live_frames"
 LIVE_FRAME_DIR.mkdir(parents=True, exist_ok=True)
-
+INTERVIEW_AUDIO_DIR = APP_DIR / "storage" / "interview_audio"
+INTERVIEW_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+TEXT_DIR = APP_DIR / "storage" / "text"
+TEXT_DIR.mkdir(parents=True, exist_ok=True)
 
 @router.post("/face-verify/{application_id}")
 async def face_verify(application_id: str, frame: UploadFile = File(...)):
@@ -107,6 +111,60 @@ async def face_verify(application_id: str, frame: UploadFile = File(...)):
                 "threshold": DEFAULT_FACE_VERIFY_THRESHOLD,
                 "message": f"Face verification failed: {str(error)}",
             },
+        )
+
+@router.post("/upload-audio/{application_id}")
+async def upload_interview_audio(
+    application_id: str,
+    audio: UploadFile = File(...)
+):
+    try:
+
+        audio_bytes = await audio.read()
+
+        if not audio_bytes:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": "Empty audio file"
+                }
+            )
+
+        audio_path = (
+            INTERVIEW_AUDIO_DIR /
+            f"{application_id}.webm"
+        )
+
+        audio_path.write_bytes(audio_bytes)
+
+        print(f"[Interview Audio] Saved: {audio_path}")
+        
+        print("[Whisper] Starting transcription...")
+
+        transcript = transcribe_audio(str(audio_path))
+
+        print("[Whisper] Transcription complete")
+        
+        transcript_path = (TEXT_DIR /f"{application_id}.txt")
+
+        transcript_path.write_text(transcript,encoding="utf-8")
+
+        print(f"[Whisper] Transcript saved: {transcript_path}")
+
+        return JSONResponse(
+    status_code=200,
+    content={"success": True,"message": "Audio saved and transcribed","transcript": transcript})
+
+    except Exception as error:
+        print(traceback.format_exc())
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": str(error)
+            }
         )
 
 

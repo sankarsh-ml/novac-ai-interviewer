@@ -1,0 +1,289 @@
+[
+  {
+    "session_id": "e163cbe8-319b-4174-a6ca-1bfa508e3975",
+    "candidate_id": "e163cbe8-319b-4174-a6ca-1bfa508e3975",
+    "candidate_name": "SANKARSH PONNATH",
+    "resume_file": "Sankarsh_Ponnath_Resume (2).pdf",
+    "status": "in_progress",
+    "face_verified": true,
+    "created_at": "2026-06-23T01:34:22.107813+00:00",
+    "completed_at": null,
+    "total_score": 4,
+    "max_score": 50,
+    "questions": [
+      {
+        "question_id": "q1",
+        "question_text": "Can you tell me about your role at NOVAC during your internship?",
+        "category": "Resume Overview",
+        "difficulty": "easy",
+        "audio_file_path": "D:\\novac_3\\backend\\uploads\\audio_answers\\e163cbe8-319b-4174-a6ca-1bfa508e3975_q1_d8fea2f1e6e94b929774d638e0d1166f.webm",
+        "transcript_file_path": "uploads\\transcripts\\e163cbe8-319b-4174-a6ca-1bfa508e3975_q1_20260623070907.txt",
+        "transcript": "\u062d\u0644\u0648 \u062d\u0644\u0648 \u0627\u0644\u062d\u0644\u0648 \u0623\u0645 \u0646\u0636\u0639 \u0646\u0641\u0633 \u062e\u0627\u0631\u0632",
+        "score": 2.0,
+        "feedback": "",
+        "evaluation": {
+          "success": true,
+          "score": 2.0,
+          "relevance_score": 2.0,
+          "technical_score": 0,
+          "depth_score": 0,
+          "clarity_score": 0,
+          "strengths": [],
+          "weaknesses": [
+            "\u7b54\u6848\u4e0e\u95ee\u9898\u5b8c\u5168\u65e0\u5173",
+            "\u8868\u8fbe\u4e0d\u6e05\u6670"
+          ],
+          "feedback": "",
+          "follow_up_question": ""
+        },
+        "submitted_at": "2026-06-23T01:36:07.655100+00:00"
+      },
+      {
+        "question_id": "q2",
+        "question_text": "How did you integrate PaddleOCR in the document fraud detection system at NOVAC?",
+        "category": "Project-Based Technical",
+        "difficulty": "easy",
+        "audio_file_path": "D:\\novac_3\\backend\\uploads\\audio_answers\\e163cbe8-319b-4174-a6ca-1bfa508e3975_q2_fb670467027643379394e0045f5b806c.webm",
+        "transcript_file_path": "uploads\\transcripts\\e163cbe8-319b-4174-a6ca-1bfa508e3975_q2_20260623071516.txt",
+        "transcript": "Hi, hello, hello, I'm an internet no-wack and I worked on a front-touching system.",
+        "score": 2.0,
+        "feedback": "",
+        "evaluation": {
+          "success": true,
+          "score": 2.0,
+          "relevance_score": 2.0,
+          "technical_score": 0,
+          "depth_score": 0,
+          "clarity_score": 0,
+          "strengths": [],
+          "weaknesses": [
+            "Off-topic",
+            "Lack of technical detail"
+          ],
+          "feedback": "",
+          "follow_up_question": ""
+        },
+        "submitted_at": "2026-06-23T01:41:02.832805+00:00"
+      },
+      {
+        "question_id": "q3",
+        "question_text": "Can you explain how you used transfer learning to train your vehicle damage detection models in FastAPI?",
+        "category": "Skill-Based Technical",
+        "difficulty": "medium",
+        "audio_file_path": null,
+        "transcript_file_path": null,
+        "transcript": null,
+        "score": null,
+        "feedback": null,
+        "evaluation": null,
+        "submitted_at": null
+      },
+      {
+        "question_id": "q4",
+        "question_text": "Describe the architecture of the AI hiring platform you built, focusing on how it integrates FastAPI and React.",
+        "category": "System Design / Architecture / Debugging",
+        "difficulty": "medium",
+        "audio_file_path": null,
+        "transcript_file_path": null,
+        "transcript": null,
+        "score": null,
+        "feedback": null,
+        "evaluation": null,
+        "submitted_at": null
+      },
+      {
+        "question_id": "q5",
+        "question_text": "Tell me about a difficult bug or model integration issue you faced and how you systematically debugged it.",
+        "category": "Behavioral/HR",
+        "difficulty": "hard",
+        "audio_file_path": null,
+        "transcript_file_path": null,
+        "transcript": null,
+        "score": null,
+        "feedback": null,
+        "evaluation": null,
+        "submitted_at": null
+      }
+    ],
+    "candidate_info": {
+      "application_id": "e163cbe8-319b-4174-a6ca-1bfa508e3975",
+      "candidate_name": "SANKARSH PONNATH",
+      "file_name": "Sankarsh_Ponnath_Resume (2).pdf",
+      "job_id": "3e3473f4-0aea-490e-82fe-94d25e4d98c2",
+      "email": null,
+      "phone": null
+    },
+    "face_verified_at": "2026-06-23T01:34:22.185269+00:00",
+    "face_verification": {
+      "match": true,
+      "score": 0.6756,
+      "threshold": 0.38,
+      "reference_source": "resume"
+    },
+    "submitted_answer_count": 2
+  },
+  {
+    "session_id": "297316ac-87f6-4f5c-99bb-7acdf0488852",
+    "candidate_id": "297316ac-87f6-4f5c-99bb-7acdf0488852",
+    "candidate_name": "SANKARSH PONNATH",
+    "resume_file": "Sankarsh_Ponnath_Resume (2).pdf",
+    "status": "completed",
+    "face_verified": true,
+    "created_at": "2026-06-23T01:56:03.522944+00:00",
+    "completed_at": "2026-06-23T02:00:56.630081+00:00",
+    "total_score": 10,
+    "max_score": 50,
+    "questions": [
+      {
+        "question_id": "q1",
+        "question_text": "Can you tell me about your role at NOVAC during your internship?",
+        "category": "Resume Overview",
+        "difficulty": "easy",
+        "audio_file_path": "D:\\novac_3\\backend\\uploads\\audio_answers\\297316ac-87f6-4f5c-99bb-7acdf0488852_q1_dbb1ce6e11964cff8044614790d63703.webm",
+        "transcript_file_path": "uploads\\transcripts\\297316ac-87f6-4f5c-99bb-7acdf0488852_q1_20260623072930.txt",
+        "transcript": "Hello, how are you?",
+        "score": 2.0,
+        "feedback": "",
+        "evaluation": {
+          "success": true,
+          "score": 2.0,
+          "relevance_score": 2.0,
+          "technical_score": 0,
+          "depth_score": 0,
+          "clarity_score": 0,
+          "strengths": [],
+          "weaknesses": [
+            "Off-topic response",
+            "Lack of technical detail"
+          ],
+          "feedback": "",
+          "follow_up_question": ""
+        },
+        "submitted_at": "2026-06-23T01:56:37.970398+00:00"
+      },
+      {
+        "question_id": "q2",
+        "question_text": "Describe the process of building the full-stack AI fraud-detection platform you worked on at NOVAC.",
+        "category": "Project-Based Technical",
+        "difficulty": "easy",
+        "audio_file_path": "D:\\novac_3\\backend\\uploads\\audio_answers\\297316ac-87f6-4f5c-99bb-7acdf0488852_q2_83d5c0a9105a4f2c93c50bdae38ba83f.webm",
+        "transcript_file_path": "uploads\\transcripts\\297316ac-87f6-4f5c-99bb-7acdf0488852_q2_20260623073023.txt",
+        "transcript": "It was a very fun process.",
+        "score": 2.0,
+        "feedback": "The answer is somewhat relevant but lacks any technical or specific information about the project.",
+        "evaluation": {
+          "success": true,
+          "score": 2.0,
+          "relevance_score": 4.0,
+          "technical_score": 0,
+          "depth_score": 0,
+          "clarity_score": 5.0,
+          "strengths": [],
+          "weaknesses": [
+            "Lack of technical details",
+            "Insufficient depth and specificity"
+          ],
+          "feedback": "The answer is somewhat relevant but lacks any technical or specific information about the project.",
+          "follow_up_question": ""
+        },
+        "submitted_at": "2026-06-23T02:00:22.307380+00:00"
+      },
+      {
+        "question_id": "q3",
+        "question_text": "How do you handle model caching and shared preprocessing in your FastAPI backend to improve system reliability?",
+        "category": "Skill-Based Technical",
+        "difficulty": "medium",
+        "audio_file_path": "D:\\novac_3\\backend\\uploads\\audio_answers\\297316ac-87f6-4f5c-99bb-7acdf0488852_q3_16e0d0f57f41452297be5946c9f756d3.webm",
+        "transcript_file_path": "uploads\\transcripts\\297316ac-87f6-4f5c-99bb-7acdf0488852_q3_20260623073033.txt",
+        "transcript": "I handle it very easily",
+        "score": 2.0,
+        "feedback": "The answer is somewhat relevant but lacks depth and specificity. More details on how model caching and shared preprocessing are implemented would be beneficial.",
+        "evaluation": {
+          "success": true,
+          "score": 2.0,
+          "relevance_score": 4.0,
+          "technical_score": 1.0,
+          "depth_score": 0,
+          "clarity_score": 1.0,
+          "strengths": [],
+          "weaknesses": [
+            "Lack of detail in the answer",
+            "Generic response without specific examples"
+          ],
+          "feedback": "The answer is somewhat relevant but lacks depth and specificity. More details on how model caching and shared preprocessing are implemented would be beneficial.",
+          "follow_up_question": "Can you provide an example of how you have implemented model caching and shared preprocessing in a FastAPI backend project?"
+        },
+        "submitted_at": "2026-06-23T02:00:32.495088+00:00"
+      },
+      {
+        "question_id": "q4",
+        "question_text": "Explain how you would design a deployable pipeline for an AI model that needs to be updated frequently, ensuring minimal downtime and efficient deployment.",
+        "category": "System Design / Architecture / Debugging",
+        "difficulty": "hard",
+        "audio_file_path": "D:\\novac_3\\backend\\uploads\\audio_answers\\297316ac-87f6-4f5c-99bb-7acdf0488852_q4_44203c8f3dcb42c2ad7a92e7fa314ae8.webm",
+        "transcript_file_path": "uploads\\transcripts\\297316ac-87f6-4f5c-99bb-7acdf0488852_q4_20260623073044.txt",
+        "transcript": "I don't know.",
+        "score": 2.0,
+        "feedback": "",
+        "evaluation": {
+          "success": true,
+          "score": 2.0,
+          "relevance_score": 0,
+          "technical_score": 0,
+          "depth_score": 0,
+          "clarity_score": 0,
+          "strengths": [],
+          "weaknesses": [
+            "Answer is off-topic and does not address the question."
+          ],
+          "feedback": "",
+          "follow_up_question": ""
+        },
+        "submitted_at": "2026-06-23T02:00:42.851751+00:00"
+      },
+      {
+        "question_id": "q5",
+        "question_text": "Can you walk us through the process of training your EfficientNetB0 model for vehicle damage detection using transfer learning?",
+        "category": "Skill-Based Technical",
+        "difficulty": "medium",
+        "audio_file_path": "D:\\novac_3\\backend\\uploads\\audio_answers\\297316ac-87f6-4f5c-99bb-7acdf0488852_q5_d1f834a48db54d85b4e41c8ad85c112d.webm",
+        "transcript_file_path": "uploads\\transcripts\\297316ac-87f6-4f5c-99bb-7acdf0488852_q5_20260623073053.txt",
+        "transcript": "Just to give me the job please",
+        "score": 2.0,
+        "feedback": "",
+        "evaluation": {
+          "success": true,
+          "score": 2.0,
+          "relevance_score": 2.0,
+          "technical_score": 0,
+          "depth_score": 0,
+          "clarity_score": 0,
+          "strengths": [],
+          "weaknesses": [
+            "Off-topic answer",
+            "Lacks technical detail"
+          ],
+          "feedback": "",
+          "follow_up_question": ""
+        },
+        "submitted_at": "2026-06-23T02:00:52.288386+00:00"
+      }
+    ],
+    "candidate_info": {
+      "application_id": "297316ac-87f6-4f5c-99bb-7acdf0488852",
+      "candidate_name": "SANKARSH PONNATH",
+      "file_name": "Sankarsh_Ponnath_Resume (2).pdf",
+      "job_id": "3e3473f4-0aea-490e-82fe-94d25e4d98c2",
+      "email": null,
+      "phone": null
+    },
+    "face_verified_at": "2026-06-23T01:56:03.582715+00:00",
+    "face_verification": {
+      "match": true,
+      "score": 0.6527,
+      "threshold": 0.38,
+      "reference_source": "resume"
+    },
+    "submitted_answer_count": 5
+  }
+]

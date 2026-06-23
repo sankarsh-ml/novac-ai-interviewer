@@ -160,3 +160,112 @@ function getFaceBackendMessage(data) {
 
   return [...new Set(messages)].join(" ");
 }
+
+
+export async function uploadInterviewAudio(
+  applicationId,
+  audioBlob
+) {
+  const cleanApplicationId = String(applicationId || "").trim();
+
+  if (!cleanApplicationId) {
+    throw new Error("Application ID missing.");
+  }
+
+  if (!audioBlob) {
+    throw new Error("Audio blob missing.");
+  }
+
+  const formData = new FormData();
+
+  formData.append(
+    "audio",
+    audioBlob,
+    "interview.webm"
+  );
+
+  const url =
+    `${API_BASE_URL}/api/interview/upload-audio/${encodeURIComponent(
+      cleanApplicationId
+    )}`;
+
+  let response;
+
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (error) {
+    console.error("[Interview Audio] Upload failed:", error);
+
+    throw new Error(
+      "Could not reach backend for audio upload."
+    );
+  }
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data?.message ||
+      `Audio upload failed. HTTP ${response.status}`
+    );
+  }
+
+  return data;
+}
+
+
+export async function submitQuestionAudioAnswer(applicationId, questionId, audioBlob) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+
+  if (!questionId) {
+    throw new Error("Question ID missing.");
+  }
+
+  if (!audioBlob || audioBlob.size === 0) {
+    throw new Error("Audio recording is empty.");
+  }
+
+  const formData = new FormData();
+  formData.append("audio", audioBlob, `answer-${questionId}.webm`);
+
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interview/${encodeURIComponent(
+      cleanApplicationId
+    )}/question/${encodeURIComponent(questionId)}/audio-answer`,
+    {
+      method: "POST",
+      body: formData,
+    },
+    "Could not submit audio answer."
+  );
+}
+
+
+export async function completeInterview(applicationId) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interview/${encodeURIComponent(cleanApplicationId)}/complete`,
+    {
+      method: "POST",
+    },
+    "Could not complete interview."
+  );
+}
+
+
+export async function cleanupInterview(applicationId, options = {}) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interview/${encodeURIComponent(cleanApplicationId)}/cleanup`,
+    {
+      method: "DELETE",
+      keepalive: Boolean(options.keepalive),
+    },
+    "Could not clean up interview."
+  );
+}

@@ -53,3 +53,10 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+backend/models/
+backend/uploads/audio_answers/
+backend/uploads/transcripts/
+backend/uploads/whisper_tests/
+backend/.env
+.env

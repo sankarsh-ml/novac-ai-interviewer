@@ -6,10 +6,13 @@ import HomePage from "./pages/HomePage.jsx";
 import HRDashboardPage from "./pages/HRDashboardPage.jsx";
 import InterviewPage from "./pages/InterviewPage.jsx";
 import StudentUploadPage from "./pages/StudentUploadPage.jsx";
+import WhisperTestPage from "./pages/WhisperTestPage.jsx";
 
 
 function App() {
-  const [currentPage, setCurrentPage] = useState("home");
+  const [currentPage, setCurrentPage] = useState(() => (
+    window.location.pathname === "/test-whisper" ? "whisper-test" : "home"
+  ));
   const [applicationSummary, setApplicationSummary] = useState(null);
   const [aadhaarSummary, setAadhaarSummary] = useState(null);
 
@@ -21,6 +24,7 @@ function App() {
   const handleBackHome = () => {
     setApplicationSummary(null);
     setAadhaarSummary(null);
+    window.history.pushState({}, "", "/");
     setCurrentPage("home");
   };
 
@@ -63,6 +67,10 @@ function App() {
 
   if (currentPage === "admin") {
     return <HRDashboardPage onBack={handleBackHome} />;
+  }
+
+  if (currentPage === "whisper-test") {
+    return <WhisperTestPage onBack={handleBackHome} />;
   }
 
   return (

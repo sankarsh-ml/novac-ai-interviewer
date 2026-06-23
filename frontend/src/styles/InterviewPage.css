@@ -93,6 +93,7 @@
 
 .camera-button,
 .start-interview-button,
+.start-recording-button,
 .submit-answer-button,
 .next-question-button,
 .finish-interview-button {
@@ -106,6 +107,7 @@
 
 .camera-button.start,
 .start-interview-button,
+.start-recording-button,
 .next-question-button,
 .finish-interview-button {
   background: #178044;
@@ -128,6 +130,7 @@
 
 .camera-button:disabled,
 .start-interview-button:disabled,
+.start-recording-button:disabled,
 .submit-answer-button:disabled,
 .next-question-button:disabled,
 .finish-interview-button:disabled {
@@ -301,16 +304,52 @@
   font-weight: 800;
 }
 
+.audio-debug-panel {
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.35);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 0.9rem;
+}
+
+.audio-debug-panel audio {
+  width: 100%;
+}
+
+.audio-debug-panel a {
+  color: #8ab4ff;
+  font-weight: 700;
+  text-decoration: underline;
+}
+
 .interview-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 286px;
+  grid-template-columns: minmax(0, 1fr) 260px;
   gap: 22px;
   align-items: start;
   margin-top: 20px;
 }
 
-.answer-panel {
+.answer-panel,
+.voice-answer-panel {
   min-width: 0;
+}
+
+.voice-answer-panel {
+  position: relative;
+  min-height: 320px;
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #fbfdff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  text-align: center;
 }
 
 .answer-label {
@@ -340,13 +379,100 @@
 }
 
 .camera-mini-card {
-  width: 286px;
+  width: 260px;
   border: 1px solid #d9e2ef;
   border-radius: 8px;
   background: #f8fafc;
   padding: 12px;
   position: sticky;
   top: 16px;
+}
+
+.recording-status,
+.submission-status,
+.success-message,
+.status-message {
+  margin: 0;
+  color: #334155;
+  font-size: 1.1rem;
+  font-weight: 900;
+}
+
+.recording-status::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #dc2626;
+  vertical-align: middle;
+}
+
+.success-message {
+  color: #178044;
+}
+
+.stop-answer-button {
+  min-height: 48px;
+  margin-top: 20px;
+  border: 0;
+  border-radius: 8px;
+  background: #c2413b;
+  color: #ffffff;
+  padding: 0 24px;
+  font-weight: 900;
+}
+
+.start-recording-button {
+  min-height: 52px;
+  padding: 0 26px;
+  font-size: 1rem;
+}
+
+.recording-controls,
+.recording-btn,
+.submission-status,
+.success-message {
+  position: absolute;
+  right: 24px;
+  bottom: 24px;
+}
+
+.recording-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.recording-controls .recording-status {
+  position: static;
+}
+
+.recording-btn {
+  min-height: 48px;
+  border: 0;
+  border-radius: 8px;
+  color: #ffffff;
+  padding: 0 22px;
+  font-weight: 900;
+}
+
+.recording-btn.start {
+  background: #178044;
+}
+
+.recording-btn.stop {
+  background: #c2413b;
+}
+
+.recording-controls .recording-btn {
+  position: static;
+}
+
+.candidate-completion {
+  text-align: center;
 }
 
 .face-mini-status {
@@ -535,7 +661,7 @@
 
   .camera-mini-card {
     width: 100%;
-    max-width: 286px;
+    max-width: 260px;
     position: static;
     order: -1;
   }

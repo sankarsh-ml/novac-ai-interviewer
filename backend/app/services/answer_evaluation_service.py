@@ -133,18 +133,37 @@ Candidate answer:
 """.strip()
 
 
-def _normalize_score(value) -> int | float:
+def _normalize_score(score, default=0):
+    """
+    Safely normalize score values returned by Qwen/evaluator.
+    Handles int, float, string numbers, and bad values.
+    Returns a score between 0 and 10.
+    """
+
+    if score is None:
+        return default
+
     try:
-        score = float(value)
-    except (TypeError, ValueError):
-        return 0
+        if isinstance(score, str):
+            score = score.strip()
 
-    score = max(0, min(10, score))
+            # Handle formats like "8/10"
+            if "/" in score:
+                score = score.split("/")[0].strip()
 
-    if score.is_integer():
-        return int(score)
+            # Handle formats like "80%"
+            score = score.replace("%", "").strip()
 
-    return round(score, 1)
+        score_value = float(score)
+
+    except (ValueError, TypeError):
+        return default
+
+    # Clamp score between 0 and 10
+    score_value = max(0, min(10, score_value))
+
+
+    return round(score_value, 2)
 
 
 def _normalize_string_list(value) -> list[str]:

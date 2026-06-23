@@ -8,6 +8,9 @@ requests==2.32.5
 # Resume parsing / PDF handling
 PyMuPDF==1.27.2.3
 
+# Whisper transcription
+faster-whisper>=1.1.0
+
 # Face verification
 insightface==1.0.1
 numpy==1.26.4

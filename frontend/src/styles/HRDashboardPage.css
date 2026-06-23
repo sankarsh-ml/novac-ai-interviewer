@@ -60,11 +60,13 @@
   opacity: 0.95;
 }
 
-.jobs-section {
+.jobs-section,
+.interview-results-section {
   margin-top: 24px;
 }
 
-.jobs-list {
+.jobs-list,
+.interview-results-list {
   margin-top: 16px;
   border: 1px solid #d9e2ef;
   border-radius: 8px;
@@ -93,4 +95,136 @@
 
 .job-card small {
   color: #64748b;
+}
+
+.section-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.section-heading-row h2 {
+  margin: 0;
+}
+
+.hr-secondary-button {
+  min-height: 38px;
+  border: 1px solid #cdd8e7;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f5f9f;
+  padding: 0 14px;
+  font-weight: 800;
+}
+
+.interview-result-card {
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.result-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 14px;
+}
+
+.result-card-header h3 {
+  margin: 0 0 8px;
+  color: #111827;
+}
+
+.result-card-header p {
+  margin: 4px 0 0;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.total-score-box {
+  min-width: 132px;
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 12px;
+  text-align: right;
+}
+
+.total-score-box span,
+.total-score-box small {
+  display: block;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.total-score-box strong {
+  display: block;
+  margin: 6px 0;
+  color: #111827;
+  font-size: 1.35rem;
+}
+
+.result-question-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.result-question {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fbfdff;
+  padding: 14px;
+}
+
+.result-question p {
+  margin: 8px 0 0;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.result-question-topline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.result-question-topline span,
+.result-question-topline b {
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #1f5f9f;
+  padding: 5px 10px;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.result-question-topline strong {
+  margin-left: auto;
+  color: #111827;
+}
+
+.result-question-text {
+  color: #111827 !important;
+  font-weight: 800;
+}
+
+.path-line {
+  word-break: break-all;
+}
+
+@media (max-width: 720px) {
+  .result-card-header,
+  .section-heading-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .total-score-box {
+    text-align: left;
+  }
 }

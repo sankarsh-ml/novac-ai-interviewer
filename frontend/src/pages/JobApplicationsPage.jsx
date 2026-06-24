@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import "../styles/JobApplicationsPage.css";
 function JobApplicationsPage({
   job,
-  onBack
+  onBack,onViewShortlisted
 }) {
 
   const [applications, setApplications] =
@@ -30,7 +30,7 @@ function JobApplicationsPage({
           data.applications || []
         );
       }
-
+      console.log(applications);
     } catch (error) {
 
       console.error(error);
@@ -196,7 +196,16 @@ function JobApplicationsPage({
         </table>
 
       </div>
-
+            <div style={{marginBottom: "20px",marginTop:"20px",textAlign:"centre"}}>
+          <button
+            className="hr-button"
+            onClick={() =>
+              onViewShortlisted(job)
+            }
+          >
+            View Shortlisted Candidates
+          </button>
+        </div>
     </div>
 
   </main>

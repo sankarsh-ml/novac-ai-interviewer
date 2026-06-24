@@ -1,9 +1,11 @@
 from pathlib import Path
 from typing import Optional
 import uuid
-
+from app.routes.ats_routes import score_resume
+from app.services.db_service import get_application_by_id
+from typing import List
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-
+import re
 from app.services.db_service import save_resume_application
 from app.services.resume_parser import (
     clean_text,
@@ -20,6 +22,20 @@ APP_DIR = Path(__file__).resolve().parents[1]
 RESUME_STORAGE_DIR = APP_DIR / "storage" / "resumes"
 RESUME_PHOTO_STORAGE_DIR = APP_DIR / "storage" / "resume_photos"
 
+
+
+def extract_email(text: str) -> str:
+
+    match = re.search(
+        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+        text
+    )
+
+    return (
+        match.group(0)
+        if match
+        else ""
+    )
 
 async def _process_resume_upload(file: UploadFile):
     original_file_name = Path(file.filename or "").name
@@ -44,6 +60,7 @@ async def _process_resume_upload(file: UploadFile):
     extracted_text = clean_text(extracted["text"])
     sections_detected = extract_sections(extracted_text)
     candidate_name = extract_candidate_name(extracted_text)
+    email =extract_email(extracted_text)
     resume_photo = extract_resume_photo(str(saved_file_path), str(RESUME_PHOTO_STORAGE_DIR / saved_file_name))
 
     return {
@@ -62,9 +79,80 @@ async def _process_resume_upload(file: UploadFile):
                 "sections_detected": sections_detected,
             },
             "candidate_name": candidate_name,
+            "email":email,
             "resume_photo_available": resume_photo["available"],
             "resume_photo_path": resume_photo["path"],
         },
+    }
+
+@router.post("/bulk-upload")
+async def bulk_upload_resumes(job_id: str = Form(...),resumes: List[UploadFile] = File(...)):
+
+    processed = []
+    for resume_file in resumes:
+        resume_data = await _process_resume_upload(resume_file)
+
+        resume_summary =resume_data["resume"]
+
+        application_id =save_resume_application(
+                {
+                    **resume_data,
+                    "job_id": job_id,
+                    "ats_ready_data":
+                        resume_summary[
+                            "ats_ready_data"
+                        ],
+                    "candidate_name":
+                        resume_summary[
+                            "candidate_name"
+                        ],
+                    "email":
+                        resume_summary["email"],
+                    "resume_photo_path":
+                        resume_summary[
+                            "resume_photo_path"
+                        ],
+                    "ats_status":
+                        "pending",
+                    "aadhaar_verification":
+                        _default_aadhaar_verification(),
+                    "kyc_verification":
+                        _default_aadhaar_verification(),
+                }
+            )
+
+        score_resume(application_id)
+
+        application =get_application_by_id(
+                application_id
+            )
+
+        processed.append(
+            {
+                "application_id":
+                    application_id,
+
+                "candidate_name":
+                    application.get(
+                        "candidate_name"
+                    ),
+
+                "ats_status":
+                    application.get(
+                        "ats_status"
+                    ),
+
+                "ats_score":
+                    application.get(
+                        "ats_score"
+                    )
+            }
+        )
+
+    return {
+        "success": True,
+        "count": len(processed),
+        "applications": processed
     }
 
 

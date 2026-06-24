@@ -1,5 +1,5 @@
 import { useState } from "react";
-
+import ShortlistedCandidatesPage from "./pages/ShortlistedCandidatesPage.jsx";
 import AadhaarUploadPage from "./pages/AadhaarUploadPage.jsx";
 import AtsScreeningPage from "./pages/AtsScreeningPage.jsx";
 import HomePage from "./pages/HomePage.jsx";
@@ -9,7 +9,8 @@ import StudentUploadPage from "./pages/StudentUploadPage.jsx";
 import HRHomePage from "./pages/HRHomePage.jsx";
 import CurrentJobsPage from "./pages/CurrentJobsPage.jsx";
 import JobApplicationsPage from "./pages/JobApplicationsPage.jsx";
-
+import UploadResumesPage from "./pages/UploadResumePage.jsx";
+import QuestionBankPage from "./pages/QuestionBankPage.jsx";
 function App() {
   const [currentPage, setCurrentPage] = useState("home");
   const [applicationSummary, setApplicationSummary] = useState(null);
@@ -87,28 +88,95 @@ function App() {
     );
   }
 
-  if (currentPage === "current-jobs") {
-  return (
-    <CurrentJobsPage
-      onBack={() =>
-        setCurrentPage("admin")
-      }
-      onViewApplications={(job) => {
-        setSelectedJob(job);
-        setCurrentPage("job-applications");
-      }}
-    />
-  );
-}
+  const handleUploadResumes = (job) => {
+    setSelectedJob(job);
+    setCurrentPage("upload-resumes");
+  };
 
-  if (currentPage === "job-applications") {
+  const handleQuestionBank = (job) => {
+    setSelectedJob(job);
+    setCurrentPage("question-bank");
+  };
+
+  if (currentPage === "question-bank") {
     return (
-      <JobApplicationsPage
+      <QuestionBankPage
         job={selectedJob}
         onBack={() =>
           setCurrentPage("current-jobs")
         }
       />
+    );
+  }
+
+  if (currentPage === "current-jobs") {
+    return (
+      <CurrentJobsPage
+        onBack={() =>
+          setCurrentPage("admin")
+        }
+
+        onViewApplications={(job) => {
+          setSelectedJob(job);
+          setCurrentPage("job-applications");
+        }}
+
+        onUploadResumes={handleUploadResumes}
+
+        onQuestionBank={handleQuestionBank}
+      />
+    );
+  }
+
+  if (currentPage === "upload-resumes") {
+    return (
+      <UploadResumesPage
+        job={selectedJob}
+        onBack={() =>
+          setCurrentPage("current-jobs")
+        }
+      />
+    );
+  }
+
+  if (currentPage ==="shortlisted") 
+    {
+
+    return (
+
+      <ShortlistedCandidatesPage
+        job={selectedJob}
+        onBack={() =>
+          setCurrentPage(
+            "job-applications"
+          )
+        }
+      />
+
+    );
+  }
+
+  if (currentPage === "job-applications") {
+    return (
+      <JobApplicationsPage
+            job={selectedJob}
+
+            onBack={() =>
+              setCurrentPage(
+                "current-jobs"
+              )
+            }
+
+            onViewShortlisted={(job) => {
+
+              setSelectedJob(job);
+
+              setCurrentPage(
+                "shortlisted"
+              );
+
+            }}
+          />
     );
   }
   

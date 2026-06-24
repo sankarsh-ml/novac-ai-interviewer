@@ -2,7 +2,10 @@ import traceback
 import sys
 import uuid
 from pathlib import Path
-
+import uuid
+import json
+from pathlib import Path
+from datetime import datetime
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import JSONResponse
 
@@ -26,6 +29,151 @@ INTERVIEW_AUDIO_DIR = APP_DIR / "storage" / "interview_audio"
 INTERVIEW_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 TEXT_DIR = APP_DIR / "storage" / "text"
 TEXT_DIR.mkdir(parents=True, exist_ok=True)
+APP_DIR = Path(__file__).resolve().parent.parent
+
+INTERVIEW_LINK_DIR = (APP_DIR /"storage" /"interview_links")
+
+INTERVIEW_LINK_DIR.mkdir(parents=True,exist_ok=True)
+APPLICATIONS_FILE = (APP_DIR /"storage" /"applications.json")
+
+def update_application_link(application_id,interview_link,expiry_date):
+
+    with open(APPLICATIONS_FILE,"r") as file:
+
+        applications =json.load(file)
+
+    for application in applications:
+
+        if (
+            application[
+                "application_id"
+            ]
+            ==
+            application_id
+        ):
+
+            application[
+                "interview_link"
+            ] = interview_link
+
+            application[
+                "expiry_date"
+            ] = expiry_date
+
+            break
+
+    with open(
+        APPLICATIONS_FILE,
+        "w"
+    ) as file:
+
+        json.dump(
+            applications,
+            file,
+            indent=4
+        )
+
+@router.post("/create-link")
+async def create_link(payload: dict):
+    print("CREATE LINK API HIT")
+    token = uuid.uuid4().hex
+    link = (f"http://localhost:5173/interview/{token}")
+    data = {
+        "token": token,
+        "application_id":
+            payload["application_id"],
+        "candidate_name":
+            payload["candidate_name"],
+        "email":
+            payload["email"],
+        "expiry_date":
+            payload["expiry_date"],
+        "used": False,
+        "link": link
+    }
+    file_path = (INTERVIEW_LINK_DIR /f"{token}.json")
+    print("INTERVIEW_LINK_DIR =", INTERVIEW_LINK_DIR)
+    print("FILE PATH =", file_path)
+    with open(file_path,"w") as file:
+
+        json.dump(data,file,indent=4)
+    
+    update_application_link(payload["application_id"],link,payload["expiry_date"])
+    return {
+    "success": True,
+    "link": link
+}
+
+@router.get("/validate-token/{token}")
+def validate_token(token: str):
+
+    file_path = (
+        INTERVIEW_LINK_DIR /
+        f"{token}.json"
+    )
+
+    if not file_path.exists():
+
+        return {
+            "success": False,
+            "message":
+                "Invalid Interview Link"
+        }
+
+    try:
+
+        with open(
+            file_path,
+            "r"
+        ) as file:
+
+            data = json.load(file)
+
+        if data.get("used", False):
+
+            return {
+                "success": False,
+                "message":
+                    "Interview Already Completed"
+            }
+
+        expiry_date = datetime.fromisoformat(
+            data["expiry_date"]
+        )
+
+        if datetime.now() > expiry_date:
+
+            return {
+                "success": False,
+                "message":
+                    "Interview Link Expired"
+            }
+
+        return {
+            "success": True,
+            "message":
+                "Interview Link Valid",
+
+            "application_id":
+                data["application_id"],
+
+            "candidate_name":
+                data["candidate_name"],
+
+            "email":
+                data["email"],
+
+            "expiry_date":
+                data["expiry_date"]
+        }
+
+    except Exception as error:
+
+        return {
+            "success": False,
+            "message":
+                f"Validation Error: {str(error)}"
+        }
 
 @router.post("/face-verify/{application_id}")
 async def face_verify(application_id: str, frame: UploadFile = File(...)):

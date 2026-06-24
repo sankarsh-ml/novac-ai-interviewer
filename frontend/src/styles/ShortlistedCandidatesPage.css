@@ -1,0 +1,159 @@
+.shortlisted-page {
+  min-height: 100vh;
+  padding: 28px 16px 48px;
+  background: #f8fafc;
+}
+
+.shortlisted-container {
+  width: min(1200px, 100%);
+  margin: 0 auto;
+}
+
+.shortlisted-header {
+  margin: 28px 0;
+}
+
+.shortlisted-header h1 {
+  margin: 0;
+  color: #111827;
+  font-size: clamp(2rem, 5vw, 3rem);
+}
+
+.shortlisted-header p {
+  margin-top: 8px;
+  color: #64748b;
+  font-size: 1.1rem;
+}
+
+.summary-card {
+  width: 260px;
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+  margin-bottom: 24px;
+}
+
+.summary-card span {
+  display: block;
+  color: #64748b;
+  margin-bottom: 8px;
+}
+
+.summary-card strong {
+  font-size: 2rem;
+  color: #111827;
+}
+
+.table-wrapper {
+  background: white;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+}
+
+.shortlisted-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.shortlisted-table thead {
+  background: #f1f5f9;
+}
+
+.shortlisted-table th {
+  text-align: left;
+  padding: 18px;
+  color: #111827;
+  font-weight: 700;
+}
+
+.shortlisted-table td {
+  padding: 18px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.shortlisted-table tr:hover {
+  background: #f8fafc;
+}
+
+.send-button {
+  border: none;
+  background: #1f6fe5;
+  color: white;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.send-button:hover {
+  opacity: 0.95;
+}
+
+.back-button {
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: white;
+  color: #111827;
+  padding: 12px 20px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.back-button:hover {
+  background: #f8fafc;
+}
+
+.expiry-input {
+  border: 2px solid #d9e2ef;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  background: white;
+  color: #111827;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.expiry-input:hover {
+  border-color: #1f6fe5;
+}
+
+.expiry-input:focus {
+  outline: none;
+  border-color: #1f6fe5;
+  box-shadow: 0 0 0 3px rgba(31, 111, 229, 0.15);
+}
+
+.generated-link {
+  max-width: 320px;
+  word-break: break-all;
+  color: #1f6fe5;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.no-link {
+  color: #94a3b8;
+  font-style: italic;
+}
+.send-button {
+  border: none;
+  background: #1f6fe5;
+  color: white;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+
+.send-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(31, 111, 229, 0.25);
+}
+.shortlisted-table td {
+  vertical-align: middle;
+}

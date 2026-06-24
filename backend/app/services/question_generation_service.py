@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.services.application_store_service import get_job_by_id
 from app.services.qwen_service import (
     call_qwen,
     extract_json_from_qwen_response,
@@ -87,11 +88,11 @@ The difficulty split must be exactly:
 - 1 Hard
 
 Required category mix:
-1. Resume Overview - Easy
-2. Project-Based Technical - Easy or Medium
+1. Project + Job Skill - Easy
+2. Project + Job Skill - Easy or Medium
 3. Skill-Based Technical - Medium
 4. System Design / Architecture / Debugging - Medium or Hard
-5. Behavioral / HR / ATS Gap - Hard or Easy depending on content
+5. Required Skill Gap / Learning - Hard or Medium if a required skill is missing
 
 Required JSON schema:
 {{
@@ -102,14 +103,18 @@ Required JSON schema:
       "category": "",
       "difficulty": "Easy | Medium | Hard",
       "question": "",
-      "expected_focus": ""
+      "expected_focus": "",
+      "job_skill": "",
+      "resume_evidence": ""
     }}
   ]
 }}
 
 Question quality rules:
-- The questions must be varied across resume areas.
-- Questions must be based on the actual resume.
+- Questions must be based on common ground between the HR job role and the candidate resume.
+- At least 2 questions must directly reference candidate projects.
+- At least 2 questions must directly reference required job skills.
+- At least 1 question should test how the candidate would learn/integrate one missing required skill if any are missing.
 - Do not repeat the same project more than twice.
 - Do not ask multiple questions with the same expected answer.
 - Do not invent fake projects.
@@ -117,9 +122,10 @@ Question quality rules:
 - Do not ask about SQL as a present skill if SQL is missing.
 - If ATS missing skills exist, ask at most one gap question.
 - Mention actual projects/skills where possible.
-- Prefer questions about FastAPI, React, OCR, PaddleOCR, OpenCV, AI/ML, MongoDB, document fraud detection, ATS matching, face verification, and deployable pipelines if present in resume.
+- Use job_title, required_skills, resume_skills, resume_projects, common_skills, missing_skills, and candidate project/internship highlights.
+- Prefer production software engineering, maintainability, deployment, security, APIs, and data handling when the job role requires them.
 
-Resume and ATS context:
+Job, resume, common-ground, and ATS context:
 {json.dumps(context, ensure_ascii=False, indent=2)}
 """.strip()
 
@@ -127,29 +133,52 @@ Resume and ATS context:
 def _build_resume_context(application: dict) -> dict:
     sections = _get_sections(application)
     ats_result = application.get("ats_result") or application.get("result") or {}
+    job = get_job_by_id(application.get("job_id")) or {}
+    resume_text = _get_resume_text(application)
+    resume_skills = _first_non_empty(
+        application.get("skills"),
+        _section_items(sections, "skills"),
+        _safe_get(application, ["resume", "skills"]),
+    )
+    resume_projects = _first_non_empty(
+        application.get("projects"),
+        _section_items(sections, "projects"),
+        _safe_get(application, ["resume", "projects"]),
+    )
+    resume_experience = _first_non_empty(
+        application.get("experience"),
+        _section_items(sections, "experience"),
+        _safe_get(application, ["resume", "experience"]),
+    )
+    required_skills = _string_list(job.get("required_skills") or job.get("skills") or [])
+    resume_skill_strings = _string_list(resume_skills)
+    project_strings = _string_list(resume_projects)
+    common_skills = _common_skills(required_skills, resume_skill_strings, project_strings, resume_text)
+    missing_skills = [
+        skill
+        for skill in required_skills
+        if skill.lower() not in {common.lower() for common in common_skills}
+    ]
 
     return {
         "candidate_name": _get_candidate_name(application),
-        "skills": _first_non_empty(
-            application.get("skills"),
-            _section_items(sections, "skills"),
-            _safe_get(application, ["resume", "skills"]),
-        ),
-        "projects": _first_non_empty(
-            application.get("projects"),
-            _section_items(sections, "projects"),
-            _safe_get(application, ["resume", "projects"]),
-        ),
-        "experience": _first_non_empty(
-            application.get("experience"),
-            _section_items(sections, "experience"),
-            _safe_get(application, ["resume", "experience"]),
-        ),
+        "job_title": job.get("title") or job.get("job_title") or "",
+        "required_skills": required_skills,
+        "education_requirement": job.get("education") or job.get("education_requirement") or "",
+        "job_description": job.get("description") or job.get("job_description") or "",
+        "skills": resume_skills,
+        "resume_skills": resume_skill_strings,
+        "projects": resume_projects,
+        "resume_projects": project_strings,
+        "experience": resume_experience,
         "education": _first_non_empty(
             application.get("education"),
             _section_items(sections, "education"),
             _safe_get(application, ["resume", "education"]),
         ),
+        "common_skills": common_skills,
+        "missing_skills": missing_skills,
+        "candidate_highlights": _candidate_highlights(resume_text),
         "ats_result": ats_result,
         "matched_skills": _first_non_empty(
             application.get("matched_skills"),
@@ -159,7 +188,7 @@ def _build_resume_context(application: dict) -> dict:
             application.get("missing_skills"),
             ats_result.get("missing_skills") if isinstance(ats_result, dict) else None,
         ),
-        "resume_text": _get_resume_text(application)[:12000],
+        "resume_text": resume_text[:12000],
     }
 
 
@@ -168,6 +197,10 @@ def _generate_rule_based_questions(application: dict) -> list[dict]:
     skills = _string_list(context.get("skills"))
     projects = _string_list(context.get("projects"))
     resume_text = str(context.get("resume_text") or "")
+    job_title = context.get("job_title") or "the role"
+    required_skills = _string_list(context.get("required_skills"))
+    common_skills = _string_list(context.get("common_skills"))
+    missing_skills = _string_list(context.get("missing_skills"))
     primary_project = _pick_project(
         projects,
         resume_text,
@@ -186,43 +219,55 @@ def _generate_rule_based_questions(application: dict) -> list[dict]:
         ["AI hiring platform", "ATS matching", "Aadhaar KYC", "face verification"],
         "your AI hiring platform",
     )
-    primary_skill = _pick_first(skills, ["FastAPI", "PaddleOCR", "OpenCV", "AI/ML"])
+    primary_skill = _pick_first(common_skills or required_skills or skills, ["FastAPI", "React", "Python"])
+    secondary_skill = _pick_first([skill for skill in (common_skills or required_skills) if skill != primary_skill], ["deployment"])
+    missing_skill = _pick_first(missing_skills, ["a missing required skill"])
 
     return [
         _question(
             "q1",
-            "Resume Overview",
+            "Project + Job Skill",
             "Easy",
-            "Walk me through your resume and explain the two projects most relevant to an AI/software role.",
-            "Communication, resume understanding, project prioritization",
+            f"Your resume mentions {primary_project}. How does that project show readiness for the {job_title} role, especially around {primary_skill}?",
+            "Project relevance, job-skill alignment, ownership",
+            primary_skill,
+            primary_project,
         ),
         _question(
             "q2",
-            "Project-Based Technical",
+            "Project + Job Skill",
             "Easy",
-            f"Could you elaborate on your experience with {primary_project}, including the tools and backend flow you used?",
-            "Project clarity, implementation details, ownership",
+            f"This role requires {secondary_skill}. Where did you apply similar engineering decisions in {skill_project}, and what trade-offs did you make?",
+            "Project clarity, required skill application, implementation trade-offs",
+            secondary_skill,
+            skill_project,
         ),
         _question(
             "q3",
             "Skill-Based Technical",
             "Medium",
-            _build_skill_question(skill_project, primary_skill),
+            _build_skill_question(skill_project, primary_skill, job_title),
             "Technical correctness, model or framework knowledge, practical depth",
+            primary_skill,
+            skill_project,
         ),
         _question(
             "q4",
             "System Design / Debugging",
             "Medium",
-            f"In {system_project}, how would you design the pipeline from resume upload to ATS screening, Aadhaar verification, face verification, and interview question generation?",
-            "Pipeline design, ATS matching, verification boundaries",
+            f"For the {job_title} role, how would you make {system_project} maintainable, secure, and deployable in production?",
+            "Architecture, security, deployment, maintainability",
+            secondary_skill,
+            system_project,
         ),
         _question(
             "q5",
-            "Behavioral/HR",
+            "Required Skill Gap / Learning",
             "Hard",
-            "Tell me about a difficult bug or model integration issue you faced and how you systematically debugged it.",
-            "Debugging discipline, ownership, communication under uncertainty",
+            f"If this role needs {missing_skill} and your resume shows limited direct evidence of it, how would you learn and integrate it into one of your existing projects?",
+            "Learning ability, gap handling, practical integration plan",
+            missing_skill,
+            primary_project,
         ),
     ]
 
@@ -249,6 +294,8 @@ def _normalize_questions(value: Any) -> list[dict]:
                 "difficulty": _normalize_difficulty(item.get("difficulty")),
                 "question": question_text,
                 "expected_focus": str(item.get("expected_focus") or "").strip(),
+                "job_skill": str(item.get("job_skill") or "").strip(),
+                "resume_evidence": str(item.get("resume_evidence") or "").strip(),
             }
         )
 
@@ -356,6 +403,8 @@ def _question(
     difficulty: str,
     question: str,
     expected_focus: str,
+    job_skill: str = "",
+    resume_evidence: str = "",
 ) -> dict:
     return {
         "id": question_id,
@@ -363,6 +412,8 @@ def _question(
         "difficulty": difficulty,
         "question": question,
         "expected_focus": expected_focus,
+        "job_skill": job_skill,
+        "resume_evidence": resume_evidence,
     }
 
 
@@ -488,8 +539,39 @@ def _pick_project(projects: list[str], resume_text: str, keywords: list[str], fa
     return searchable_projects[0] if searchable_projects else fallback
 
 
-def _build_skill_question(skill_project: str, primary_skill: str) -> str:
+def _build_skill_question(skill_project: str, primary_skill: str, job_title: str = "the role") -> str:
     if "efficientnet" in skill_project.lower() or "vehicle damage" in skill_project.lower():
-        return "Can you walk us through the process of training your EfficientNetB0 model for vehicle damage detection using transfer learning?"
+        return f"For the {job_title} role, how would you explain the process of training your EfficientNetB0 model for vehicle damage detection using transfer learning?"
 
-    return f"How have you applied {primary_skill} in {skill_project}, and what technical trade-offs did you make?"
+    return f"How have you applied {primary_skill} in {skill_project}, and what technical trade-offs matter for the {job_title} role?"
+
+
+def _common_skills(required_skills: list[str], resume_skills: list[str], projects: list[str], resume_text: str) -> list[str]:
+    search_text = " ".join(resume_skills + projects + [resume_text]).lower()
+    common = []
+
+    for skill in required_skills:
+        if skill and skill.lower() in search_text:
+            common.append(skill)
+
+    return common
+
+
+def _candidate_highlights(resume_text: str) -> list[str]:
+    highlights = []
+
+    for line in str(resume_text or "").splitlines():
+        clean_line = line.strip()
+
+        if not clean_line:
+            continue
+
+        lower = clean_line.lower()
+
+        if any(term in lower for term in ("project", "platform", "intern", "fastapi", "react", "python", "fraud", "classifier", "deployment")):
+            highlights.append(clean_line)
+
+        if len(highlights) >= 12:
+            break
+
+    return highlights

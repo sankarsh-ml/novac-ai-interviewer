@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.routes.ats_routes import router as ats_router
+from app.routes.candidate_routes import router as candidate_router
+from app.routes.dev_routes import router as dev_router
 from app.routes.interview_routes import router as interview_router
 from app.routes.job_routes import router as job_router
 from app.routes.kyc_routes import router as kyc_router
@@ -33,6 +35,8 @@ app.include_router(ats_router, prefix="/api/ats", tags=["ATS"])
 app.include_router(kyc_router, prefix="/api/kyc", tags=["KYC"])
 app.include_router(interview_router, prefix="/api/interview", tags=["Interview"])
 app.include_router(job_router, prefix="/api/hr", tags=["HR"])
+app.include_router(candidate_router, prefix="/api/candidate", tags=["Candidate"])
+app.include_router(dev_router, prefix="/api/dev", tags=["Development"])
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 WHISPER_TEST_DIR = BACKEND_DIR / "uploads" / "whisper_tests"

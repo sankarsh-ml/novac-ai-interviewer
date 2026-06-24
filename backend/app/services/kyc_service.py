@@ -232,11 +232,11 @@ def verify_aadhaar_for_application(application_id: str, aadhaar_file_path: str) 
             "data": {},
         }
 
-    if application.get("ats_status") != "passed":
+    if application.get("ats_status") != "passed" and application.get("status") != "accepted":
         return {
             "success": False,
             "status_code": 403,
-            "message": "Aadhaar verification is allowed only after ATS pass.",
+            "message": "Aadhaar verification is allowed only after ATS pass or HR acceptance.",
             "data": {},
         }
 
@@ -361,7 +361,7 @@ def verify_aadhaar_for_application(application_id: str, aadhaar_file_path: str) 
             "masked_aadhaar_number": masked_aadhaar_number,
             "aadhaar_photo_stored": bool(aadhaar_photo_path),
             "photo_match_status": photo_match.get("status"),
-            "next_step": "interview",
+            "next_step": "face",
         },
     }
 

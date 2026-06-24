@@ -1,0 +1,24 @@
+[33m3e0c224[m[33m ([m[1;36mHEAD[m[33m)[m HEAD@{0}: pull --rebase origin integrate-audio-feature (start): checkout 3e0c224ba814458742ea09906cd00edd035664c4
+[33mcbca908[m[33m ([m[1;31morigin/integrate-audio-feature[m[33m, [m[1;32mintegrate-audio-feature[m[33m)[m HEAD@{1}: commit: Integrate audio interview flow with Whisper transcription
+[33mafbf1f2[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{2}: reset: moving to origin/main
+[33ma057774[m HEAD@{3}: commit: Integrate audio interview flow with Whisper transcription
+[33m48de868[m HEAD@{4}: commit: Integrate voice interview recording with Whisper transcription
+[33m3e0c224[m[33m ([m[1;36mHEAD[m[33m)[m HEAD@{5}: commit (merge): Merge audio-to-text feature with interview flow
+[33mafbf1f2[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{6}: checkout: moving from main to integrate-audio-feature
+[33mafbf1f2[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{7}: checkout: moving from main to main
+[33mafbf1f2[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m, [m[1;32mmain[m[33m)[m HEAD@{8}: commit: complete interview flow with resume-based questions
+[33mdaa83fc[m HEAD@{9}: commit: new requirements
+[33mfa364ff[m HEAD@{10}: Branch: renamed refs/heads/integrate-main-ats-hr-no-mongo to refs/heads/main
+[33mfa364ff[m HEAD@{12}: reset: moving to fa364ff
+[33mfa364ff[m HEAD@{13}: checkout: moving from main to integrate-main-ats-hr-no-mongo
+[33ma0f7b6c[m HEAD@{14}: reset: moving to ORIG_HEAD
+[33m0d71750[m HEAD@{15}: pull origin main: Fast-forward
+[33ma0f7b6c[m HEAD@{16}: checkout: moving from integrate-main-ats-hr-no-mongo to main
+[33mfa364ff[m HEAD@{17}: commit: working
+[33m2e6c4eb[m[33m ([m[1;32mbackup-before-main-integration[m[33m)[m HEAD@{18}: checkout: moving from backup-before-main-integration to integrate-main-ats-hr-no-mongo
+[33m2e6c4eb[m[33m ([m[1;32mbackup-before-main-integration[m[33m)[m HEAD@{19}: commit: backup current aadhaar and face verification work before main integration
+[33ma0f7b6c[m HEAD@{20}: checkout: moving from main to backup-before-main-integration
+[33ma0f7b6c[m HEAD@{21}: reset: moving to origin/main
+[33m69b0d89[m HEAD@{22}: commit: Add resume upload ATS flow with MongoDB storage
+[33mf600ef0[m HEAD@{23}: Branch: renamed refs/heads/master to refs/heads/main
+[33mf600ef0[m HEAD@{25}: commit (initial): Initial commit: resume text extraction app

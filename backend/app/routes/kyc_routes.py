@@ -7,6 +7,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.services.kyc_service import verify_aadhaar_for_application
+from app.services.mongo_interview_service import mark_aadhaar_verified
 
 
 router = APIRouter()
@@ -60,6 +61,9 @@ async def upload_aadhaar(application_id: str, aadhaar_file: UploadFile = File(..
         )
 
         status_code = result.get("status_code", 200)
+
+        if result.get("success"):
+            mark_aadhaar_verified(application_id)
 
         return JSONResponse(
             status_code=status_code,

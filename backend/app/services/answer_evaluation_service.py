@@ -62,16 +62,46 @@ def evaluate_answer_with_qwen(application: dict, question: dict, answer_text: st
     elif relevance_score <= 3:
         final_score = min(final_score, 4)
 
+    normalized = _normalize_evaluation(parsed, final_score, relevance_score)
+
+    print("[Answer Evaluation] Parsed evaluation:", parsed, flush=True)
+    print("[Answer Evaluation] Final normalized feedback:", normalized.get("feedback"), flush=True)
+    print("[Answer Evaluation] Final score:", normalized.get("score"), flush=True)
+
+    return normalized
+
+
+def _normalize_evaluation(parsed: dict, final_score: float, relevance_score: float) -> dict:
+    feedback = _first_feedback(
+        parsed.get("feedback"),
+        parsed.get("overall_feedback"),
+        parsed.get("technical_feedback"),
+        parsed.get("message"),
+    )
+
+    if not feedback:
+        feedback = _fallback_feedback(final_score)
+
+    technical_feedback = str(parsed.get("technical_feedback") or "").strip()
+    communication_feedback = str(parsed.get("communication_feedback") or parsed.get("clarity_feedback") or "").strip()
+    relevance_feedback = str(parsed.get("relevance_feedback") or "").strip()
+    overall_feedback = str(parsed.get("overall_feedback") or feedback).strip()
+
     return {
         "success": bool(parsed.get("success", True)),
         "score": final_score,
-        "relevance_score": relevance_score,
         "technical_score": _normalize_score(parsed.get("technical_score")),
+        "communication_score": _normalize_score(parsed.get("communication_score", parsed.get("clarity_score"))),
+        "relevance_score": relevance_score,
+        "technical_feedback": technical_feedback,
+        "communication_feedback": communication_feedback,
+        "relevance_feedback": relevance_feedback,
+        "overall_feedback": overall_feedback,
         "depth_score": _normalize_score(parsed.get("depth_score")),
         "clarity_score": _normalize_score(parsed.get("clarity_score")),
         "strengths": _normalize_string_list(parsed.get("strengths")),
         "weaknesses": _normalize_string_list(parsed.get("weaknesses")),
-        "feedback": str(parsed.get("feedback") or "").strip(),
+        "feedback": feedback,
         "follow_up_question": str(parsed.get("follow_up_question") or "").strip(),
     }
 
@@ -113,13 +143,18 @@ Required JSON schema:
 {{
   "success": true,
   "score": 0,
-  "relevance_score": 0,
   "technical_score": 0,
+  "communication_score": 0,
+  "relevance_score": 0,
+  "technical_feedback": "",
+  "communication_feedback": "",
+  "relevance_feedback": "",
+  "overall_feedback": "",
+  "feedback": "",
   "depth_score": 0,
   "clarity_score": 0,
   "strengths": [],
   "weaknesses": [],
-  "feedback": "",
   "follow_up_question": ""
 }}
 
@@ -175,6 +210,29 @@ def _normalize_string_list(value) -> list[str]:
         value = [value]
 
     return [str(item).strip() for item in value if str(item or "").strip()]
+
+
+def _first_feedback(*values) -> str:
+    for value in values:
+        text = str(value or "").strip()
+
+        if text:
+            return text
+
+    return ""
+
+
+def _fallback_feedback(score: float) -> str:
+    if score >= 8:
+        return "Strong answer with relevant technical detail and clear alignment to the question."
+
+    if score >= 5:
+        return "Answer addressed the question partially, but needed more specific technical depth."
+
+    if score > 0:
+        return "Answer was submitted and evaluated, but it did not sufficiently address the technical expectations."
+
+    return "Answer submitted and evaluated, but detailed feedback was not generated."
 
 
 def _topic_mismatch_cap(question: dict, answer_text: str) -> int | None:

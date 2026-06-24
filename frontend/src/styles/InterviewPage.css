@@ -388,6 +388,14 @@
   top: 16px;
 }
 
+.camera-locked-note {
+  margin: 10px 0 0;
+  color: #0f766e;
+  font-size: 0.88rem;
+  font-weight: 900;
+  text-align: center;
+}
+
 .recording-status,
 .submission-status,
 .success-message,

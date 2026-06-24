@@ -1,84 +1,48 @@
 import { useState } from "react";
 
-import AadhaarUploadPage from "./pages/AadhaarUploadPage.jsx";
-import AtsScreeningPage from "./pages/AtsScreeningPage.jsx";
-import HomePage from "./pages/HomePage.jsx";
+import CandidateInvitePage from "./pages/CandidateInvitePage.jsx";
 import HRDashboardPage from "./pages/HRDashboardPage.jsx";
-import InterviewPage from "./pages/InterviewPage.jsx";
-import StudentUploadPage from "./pages/StudentUploadPage.jsx";
 import WhisperTestPage from "./pages/WhisperTestPage.jsx";
 
 
 function App() {
-  const [currentPage, setCurrentPage] = useState(() => (
-    window.location.pathname === "/test-whisper" ? "whisper-test" : "home"
-  ));
-  const [applicationSummary, setApplicationSummary] = useState(null);
-  const [aadhaarSummary, setAadhaarSummary] = useState(null);
+  const candidateInviteToken = getCandidateInviteToken();
+  const [currentPage, setCurrentPage] = useState(() => {
+    if (candidateInviteToken) {
+      return "candidate-invite";
+    }
 
-  const handleUploadSuccess = (summary) => {
-    setApplicationSummary(summary);
-    setCurrentPage("ats");
-  };
+    if (window.location.pathname === "/test-whisper") {
+      return "whisper-test";
+    }
+
+    return "admin";
+  });
 
   const handleBackHome = () => {
-    setApplicationSummary(null);
-    setAadhaarSummary(null);
     window.history.pushState({}, "", "/");
-    setCurrentPage("home");
-  };
-
-  if (currentPage === "student") {
-    return <StudentUploadPage onBack={handleBackHome} onUploadSuccess={handleUploadSuccess} />;
-  }
-
-  if (currentPage === "ats") {
-    return (
-      <AtsScreeningPage
-        applicationSummary={applicationSummary}
-        onBackHome={handleBackHome}
-        onPassed={() => setCurrentPage("aadhaar")}
-      />
-    );
-  }
-
-  if (currentPage === "aadhaar") {
-    return (
-      <AadhaarUploadPage
-        applicationSummary={applicationSummary}
-        onBackHome={handleBackHome}
-        onVerified={(summary) => {
-          setAadhaarSummary(summary);
-          setCurrentPage("interview");
-        }}
-      />
-    );
-  }
-
-  if (currentPage === "interview") {
-    return (
-      <InterviewPage
-        applicationSummary={applicationSummary}
-        aadhaarSummary={aadhaarSummary}
-        onBackHome={handleBackHome}
-      />
-    );
+    setCurrentPage("admin");
   }
 
   if (currentPage === "admin") {
-    return <HRDashboardPage onBack={handleBackHome} />;
+    return <HRDashboardPage />;
+  }
+
+  if (currentPage === "candidate-invite") {
+    return <CandidateInvitePage token={candidateInviteToken} onBackHome={handleBackHome} />;
   }
 
   if (currentPage === "whisper-test") {
     return <WhisperTestPage onBack={handleBackHome} />;
   }
 
-  return (
-    <HomePage
-      onOpenStudent={() => setCurrentPage("student")}
-      onOpenAdmin={() => setCurrentPage("admin")}
-    />
-  );
+  return <HRDashboardPage />;
+}
+
+
+function getCandidateInviteToken() {
+  const match = window.location.pathname.match(/^\/candidate\/invite\/([^/]+)\/?$/);
+  return match ? decodeURIComponent(match[1]) : "";
 }
 
 

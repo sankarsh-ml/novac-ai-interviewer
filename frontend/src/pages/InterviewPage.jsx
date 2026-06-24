@@ -13,7 +13,14 @@ import "../styles/InterviewPage.css";
 const AUTO_ADVANCE_DELAY_MS = 1000;
 
 
-function InterviewPage({ applicationSummary, onBackHome }) {
+function InterviewPage({
+  applicationSummary,
+  onBackHome,
+  mode = "full",
+  initialFaceVerified = false,
+  onFaceVerified,
+  onCompleted,
+}) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const recorderStreamRef = useRef(null);
@@ -24,6 +31,7 @@ function InterviewPage({ applicationSummary, onBackHome }) {
   const faceMatchCountRef = useRef(0);
   const faceVerificationDoneRef = useRef(false);
   const isFaceRequestInFlightRef = useRef(false);
+  const startActionInFlightRef = useRef(false);
   const autoAdvanceTimerRef = useRef(null);
   const isMountedRef = useRef(true);
   const hasInterviewStartedRef = useRef(false);
@@ -35,10 +43,11 @@ function InterviewPage({ applicationSummary, onBackHome }) {
   const [faceScore, setFaceScore] = useState(null);
   const [faceMatchCount, setFaceMatchCount] = useState(0);
   const [faceAttemptCount, setFaceAttemptCount] = useState(0);
-  const [isFaceVerified, setIsFaceVerified] = useState(false);
+  const [isFaceVerified, setIsFaceVerified] = useState(Boolean(initialFaceVerified));
   const [faceReferenceSource, setFaceReferenceSource] = useState("");
   const [faceError, setFaceError] = useState("");
   const [isVerifyingFace, setIsVerifyingFace] = useState(false);
+  const [isStartingInterview, setIsStartingInterview] = useState(false);
   const [phase, setPhase] = useState("ready");
   const [answerState, setAnswerState] = useState("idle");
   const [questions, setQuestions] = useState([]);
@@ -52,6 +61,13 @@ function InterviewPage({ applicationSummary, onBackHome }) {
   useEffect(() => {
     hasInterviewStartedRef.current = hasInterviewStarted;
   }, [hasInterviewStarted]);
+
+  useEffect(() => {
+    if (initialFaceVerified) {
+      setIsFaceVerified(true);
+      setFaceStatus("passed");
+    }
+  }, [initialFaceVerified]);
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -93,7 +109,10 @@ function InterviewPage({ applicationSummary, onBackHome }) {
 
   const startCamera = async () => {
     setCameraError("");
-    resetFaceVerification();
+
+    if (!initialFaceVerified) {
+      resetFaceVerification();
+    }
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -124,26 +143,43 @@ function InterviewPage({ applicationSummary, onBackHome }) {
   };
 
   const handleStartInterview = async () => {
-    if (isVerifyingFace || phase === "loadingQuestions") {
+    if (startActionInFlightRef.current || isVerifyingFace || phase === "loadingQuestions") {
       return;
     }
 
+    startActionInFlightRef.current = true;
     clearAutoAdvanceTimer();
     setQuestionGenerationError("");
     setAnswerError("");
     setStatusMessage("");
 
     try {
-      setIsVerifyingFace(true);
-      setStatusMessage("Verifying face...");
-      const faceResult = isFaceVerified ? { match: true } : await verifyFaceWithAttempts();
+      const needsFaceVerification = !isFaceVerified;
+      let faceResult = { match: true };
+
+      if (needsFaceVerification) {
+        setIsVerifyingFace(true);
+        setStatusMessage("Verifying face...");
+        faceResult = await verifyFaceWithAttempts();
+        setIsVerifyingFace(false);
+      }
 
       if (!faceResult?.match) {
         throw new Error("Face verification failed. Please try again.");
       }
 
+      if (mode === "face") {
+        setStatusMessage("Face verification passed.");
+        setIsFaceVerified(true);
+        setFaceStatus("passed");
+        onFaceVerified?.(faceResult);
+        return;
+      }
+
+      setIsStartingInterview(true);
       setPhase("loadingQuestions");
       setStatusMessage("Loading questions...");
+      await ensureCameraForVerification();
 
       const response = await getInterviewQuestions(applicationSummary?.application_id);
       const loadedQuestions = Array.isArray(response.questions) ? response.questions.slice(0, 5) : [];
@@ -161,6 +197,8 @@ function InterviewPage({ applicationSummary, onBackHome }) {
       setPhase("error");
     } finally {
       setIsVerifyingFace(false);
+      setIsStartingInterview(false);
+      startActionInFlightRef.current = false;
     }
   };
 
@@ -306,6 +344,8 @@ function InterviewPage({ applicationSummary, onBackHome }) {
         setPhase("completed");
         setStatusMessage("Interview submitted successfully.");
         stopRecorderTracks();
+        stopCamera();
+        onCompleted?.();
       } catch (error) {
         setAnswerError(error.message || "Could not complete interview.");
         setPhase("error");
@@ -570,11 +610,13 @@ function InterviewPage({ applicationSummary, onBackHome }) {
             faceError={faceError}
             cameraError={cameraError}
             isVerifyingFace={isVerifyingFace}
+            isStartingInterview={isStartingInterview}
             phase={phase}
             questionGenerationError={questionGenerationError}
             onStartCamera={startCamera}
             onStopCamera={stopCamera}
             onStartInterview={handleStartInterview}
+            mode={mode}
           />
         )}
 
@@ -592,7 +634,6 @@ function InterviewPage({ applicationSummary, onBackHome }) {
             lastAudioDebug={lastAudioDebug}
             onStartRecordingAnswer={handleStartRecordingAnswer}
             onStopAnswer={handleStopAnswer}
-            onStopCamera={stopCamera}
           />
         )}
 
@@ -618,54 +659,77 @@ function PreInterviewView({
   faceError,
   cameraError,
   isVerifyingFace,
+  isStartingInterview,
   phase,
   questionGenerationError,
   onStartCamera,
   onStopCamera,
   onStartInterview,
+  mode,
 }) {
+  const isFaceOnly = mode === "face";
+  const showFaceVerification = !isFaceVerified;
+
   return (
     <>
       <header className="interview-header">
-        <p className="eyebrow">Interview</p>
-        <h1>Interview Session</h1>
-        <p>Complete face verification, then start the voice interview.</p>
+        <p className="eyebrow">{showFaceVerification && isFaceOnly ? "Face Check" : "Interview"}</p>
+        <h1>{showFaceVerification && isFaceOnly ? "Face Verification" : "Interview Session"}</h1>
+        <p>
+          {showFaceVerification
+            ? "Verify your identity once, then continue to the voice interview."
+            : "Identity verified. You can start the voice interview now."}
+        </p>
       </header>
 
-      <CameraPreview videoRef={videoRef} isCameraRunning={isCameraRunning} size="large" />
+      {showFaceVerification && (
+        <>
+          <CameraPreview videoRef={videoRef} isCameraRunning={isCameraRunning} size="large" />
 
-      <div className="camera-actions centered">
-        <button className="camera-button start" type="button" onClick={onStartCamera} disabled={isCameraRunning}>
-          Start Camera
-        </button>
-        <button className="camera-button stop" type="button" onClick={onStopCamera} disabled={!isCameraRunning}>
-          Stop Camera
-        </button>
-      </div>
+          <div className="camera-actions centered">
+            <button className="camera-button start" type="button" onClick={onStartCamera} disabled={isCameraRunning}>
+              Start Camera
+            </button>
+            <button className="camera-button stop" type="button" onClick={onStopCamera} disabled={!isCameraRunning}>
+              Stop Camera
+            </button>
+          </div>
 
-      {cameraError && <p className="error-message">{cameraError}</p>}
+          {cameraError && <p className="error-message">{cameraError}</p>}
 
-      <FaceStatusCard
-        faceStatus={faceStatus}
-        faceStatusText={faceStatusText}
-        faceAttemptCount={faceAttemptCount}
-        faceMatchCount={faceMatchCount}
-        faceScore={faceScore}
-        faceReferenceSource={faceReferenceSource}
-        faceError={faceError}
-      />
+          <FaceStatusCard
+            faceStatus={faceStatus}
+            faceStatusText={faceStatusText}
+            faceAttemptCount={faceAttemptCount}
+            faceMatchCount={faceMatchCount}
+            faceScore={faceScore}
+            faceReferenceSource={faceReferenceSource}
+            faceError={faceError}
+          />
+        </>
+      )}
 
       <section className="start-interview-card">
-        {isFaceVerified && <p className="verified-kicker">Face verification passed</p>}
-        <h2>Ready to begin</h2>
-        <p className="precheck-note">Start Interview will verify your face once and then load your questions.</p>
+        {isFaceVerified && <p className="verified-kicker">Identity verified</p>}
+        <h2>{showFaceVerification ? "Ready to verify" : "Ready to begin"}</h2>
+        <p className="precheck-note">
+          {showFaceVerification
+            ? "Verify Face will compare your live frame with the stored resume or Aadhaar reference."
+            : "Start Interview will prepare your five voice interview questions."}
+        </p>
         <button
           className="start-interview-button"
           type="button"
           onClick={onStartInterview}
-          disabled={isVerifyingFace || phase === "loadingQuestions"}
+          disabled={isVerifyingFace || isStartingInterview || phase === "loadingQuestions"}
         >
-          {isVerifyingFace ? "Verifying Face..." : phase === "loadingQuestions" ? "Preparing Interview..." : "Start Interview"}
+          {isVerifyingFace
+            ? "Verifying Face..."
+            : isStartingInterview || phase === "loadingQuestions"
+              ? "Starting..."
+              : showFaceVerification
+                ? "Verify Face"
+                : "Start Interview"}
         </button>
 
         {questionGenerationError && <p className="error-message">{questionGenerationError}</p>}
@@ -688,7 +752,6 @@ function ActiveInterviewView({
   lastAudioDebug,
   onStartRecordingAnswer,
   onStopAnswer,
-  onStopCamera,
 }) {
   return (
     <section className="active-interview">
@@ -734,9 +797,7 @@ function ActiveInterviewView({
 
         <aside className="camera-mini-card">
           <CameraPreview videoRef={videoRef} isCameraRunning={isCameraRunning} size="small" />
-          <button className="camera-button stop compact" type="button" onClick={onStopCamera} disabled>
-            Camera locked during interview
-          </button>
+          <p className="camera-locked-note">Camera locked during interview</p>
         </aside>
       </div>
     </section>

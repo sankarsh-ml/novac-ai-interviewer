@@ -11,6 +11,7 @@ from app.services.db_service import (
 
 
 router = APIRouter()
+ATS_PASSING_SCORE = 65
 
 
 class AtsDecisionRequest(BaseModel):
@@ -43,31 +44,43 @@ def score_resume(application_id: str):
     }
 
     result = calculate_ats(resume_data, job)
-    decision = result.get("status") or ("passed" if result.get("passed") else "failed")
+    ats_score = _normalize_ats_score(result)
+    decision = "passed" if ats_score >= ATS_PASSING_SCORE else "failed"
+    normalized_result = {
+        **result,
+        "ats_score": ats_score,
+        "status": decision,
+        "ats_status": decision,
+        "passed": decision == "passed",
+    }
     update_application(
         application_id,
         {
             "ats_status": decision,
             "ats_decision": decision,
-            "ats_result": result,
-            "ats_score": result.get("ats_score"),
-            "matched_skills": result.get("matched_skills", []),
-            "missing_skills": result.get("missing_skills", []),
+            "ats_result": normalized_result,
+            "ats_score": ats_score,
+            "matched_skills": normalized_result.get("matched_skills", []),
+            "missing_skills": normalized_result.get("missing_skills", []),
         },
     )
 
     return {
         "success": True,
-        "ats_score": result.get("ats_score"),
-        "matched_skills": result.get("matched_skills", []),
-        "missing_skills": result.get("missing_skills", []),
-        "candidate_name": result.get("candidate_name"),
-        "passed": result.get("passed", False),
+        "application_id": application_id,
+        "ats_score": ats_score,
+        "ats_result": normalized_result,
+        "matched_skills": normalized_result.get("matched_skills", []),
+        "missing_skills": normalized_result.get("missing_skills", []),
+        "candidate_name": normalized_result.get("candidate_name"),
+        "passed": decision == "passed",
         "status": decision,
         "ats_status": decision,
-        "result": result,
+        "result": normalized_result,
         "data": {
             "application_id": application_id,
+            "ats_score": ats_score,
+            "ats_result": normalized_result,
             "ats_status": decision,
             "next_step": "aadhaar_verification" if decision == "passed" else "stop",
         },
@@ -136,3 +149,20 @@ def _get_resume_text(application: dict) -> str:
         or application.get("resume", {}).get("ats_ready_data", {}).get("normalized_text")
         or ""
     )
+
+
+def _normalize_ats_score(result: dict) -> float:
+    for key in ("ats_score", "score", "atsScore", "final_score", "match_score", "percentage"):
+        value = result.get(key)
+
+        if value is None:
+            continue
+
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            continue
+
+        return int(score) if score.is_integer() else round(score, 2)
+
+    return 0

@@ -1,14 +1,25 @@
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
+from pathlib import Path
 from pydantic import BaseModel
 
 from app.services.db_service import (
+    accept_application,
+    delete_application,
     get_all_jobs,
     get_application_by_id,
     list_applications,
     save_job,
 )
+from app.services.mongo_interview_service import (
+    get_candidate_by_application_id,
+    hard_delete_candidate,
+    list_interview_candidates,
+    upsert_accepted_candidate,
+)
 from app.services.json_storage_service import (
     cleanup_stale_empty_sessions,
+    delete_interview_session,
     get_interview_session,
     list_interview_sessions,
     submitted_answer_count,
@@ -25,6 +36,10 @@ class JobRequest(BaseModel):
     education: str
     experience: int
     keywords: list[str]
+
+
+class AcceptApplicationRequest(BaseModel):
+    frontend_base_url: str | None = None
 
 
 @router.post("/jobs")
@@ -72,6 +87,74 @@ def fetch_application(application_id: str):
     return {
         "success": True,
         "application": application,
+    }
+
+
+@router.post("/applications/{application_id}/accept")
+def accept_resume_application(
+    application_id: str,
+    request: AcceptApplicationRequest | None = None,
+    force_regenerate: bool = False,
+    frontend_base_url: str | None = None,
+):
+    try:
+        application = accept_application(
+            application_id,
+            frontend_base_url=(
+                (request.frontend_base_url if request else None)
+                or frontend_base_url
+            ),
+            force_regenerate=force_regenerate,
+        )
+    except ValueError as error:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "message": str(error),
+            },
+        )
+
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    upsert_accepted_candidate(application)
+
+    return {
+        "success": True,
+        "application_id": application.get("application_id"),
+        "invite_token": application.get("invite_token"),
+        "invite_link": application.get("invite_link"),
+    }
+
+
+@router.get("/interview-candidates")
+def fetch_interview_candidates():
+    return {
+        "success": True,
+        "candidates": list_interview_candidates(),
+    }
+
+
+@router.delete("/interview-candidates/{application_id}")
+def delete_interview_candidate(application_id: str):
+    candidate = get_candidate_by_application_id(application_id, include_deleted=True)
+    application = get_application_by_id(application_id)
+
+    if not candidate and not application:
+        raise HTTPException(status_code=404, detail="Interview candidate not found")
+
+    file_result = _delete_candidate_files(candidate or {}, application or {})
+    deleted_mongo = hard_delete_candidate(application_id)
+    deleted_application = delete_application(application_id)
+    deleted_session = delete_interview_session(application_id)
+
+    return {
+        "success": True,
+        "application_id": application_id,
+        "deleted_mongo": deleted_mongo,
+        "deleted_local_json": deleted_application or deleted_session,
+        **file_result,
     }
 
 
@@ -355,6 +438,132 @@ def _safe_get(mapping: dict, keys: list[str]):
         current = current.get(key)
 
     return current
+
+
+def _delete_candidate_files(candidate: dict, application: dict) -> dict:
+    deleted_files = []
+    missing_files = []
+    skipped_files = []
+
+    for raw_path in _candidate_file_paths(candidate, application):
+        file_path = _resolve_project_file(raw_path)
+
+        if not file_path:
+            skipped_files.append(str(raw_path))
+            continue
+
+        try:
+            if file_path.is_file():
+                file_path.unlink()
+                deleted_files.append(str(file_path))
+            else:
+                missing_files.append(str(file_path))
+        except OSError:
+            skipped_files.append(str(file_path))
+
+    deleted_folders = _prune_empty_candidate_dirs(deleted_files)
+
+    return {
+        "deleted_files": deleted_files,
+        "deleted_folders": deleted_folders,
+        "missing_files": missing_files,
+        "skipped_files": skipped_files,
+    }
+
+
+def _candidate_file_paths(candidate: dict, application: dict) -> list[str]:
+    paths = [
+        application.get("file_path"),
+        application.get("resume_photo_path"),
+        _safe_get(application, ["resume", "resume_photo_path"]),
+        application.get("aadhaar_photo_path"),
+        _safe_get(application, ["kyc", "aadhaar_photo_path"]),
+        _safe_get(application, ["kyc_verification", "aadhaar_photo_path"]),
+        _safe_get(application, ["aadhaar_verification", "aadhaar_photo_path"]),
+        _safe_get(application, ["interview_session", "face_verification", "live_frame_path"]),
+    ]
+
+    for question in candidate.get("questions") or []:
+        if isinstance(question, dict):
+            paths.extend([
+                question.get("audio_file_path"),
+                question.get("transcript_file_path"),
+            ])
+
+    session = application.get("interview_session") if isinstance(application.get("interview_session"), dict) else {}
+
+    for collection_name in ("questions", "answers"):
+        for item in session.get(collection_name) or []:
+            if isinstance(item, dict):
+                paths.extend([
+                    item.get("audio_file_path"),
+                    item.get("transcript_file_path"),
+                ])
+
+    unique_paths = []
+    seen = set()
+
+    for path in paths:
+        if not path:
+            continue
+
+        normalized = str(path)
+        if normalized in seen:
+            continue
+
+        seen.add(normalized)
+        unique_paths.append(normalized)
+
+    return unique_paths
+
+
+def _resolve_project_file(raw_path: str) -> Path | None:
+    project_root = Path(__file__).resolve().parents[3]
+    path = Path(str(raw_path))
+
+    if not path.is_absolute():
+        path = project_root / path
+
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+
+    if not _is_relative_to(resolved, project_root):
+        return None
+
+    return resolved
+
+
+def _prune_empty_candidate_dirs(deleted_files: list[str]) -> list[str]:
+    project_root = Path(__file__).resolve().parents[3]
+    allowed_roots = [
+        project_root / "backend" / "uploads",
+        project_root / "backend" / "app" / "storage",
+    ]
+    deleted_folders = []
+
+    for deleted_file in deleted_files:
+        folder = Path(deleted_file).parent
+
+        while any(_is_relative_to(folder, root.resolve()) and folder != root.resolve() for root in allowed_roots):
+            try:
+                folder.rmdir()
+                deleted_folders.append(str(folder))
+            except OSError:
+                break
+
+            folder = folder.parent
+
+    return deleted_folders
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 def _total_score(answers: list[dict]) -> int | float:

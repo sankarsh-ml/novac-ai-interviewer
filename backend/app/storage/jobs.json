@@ -56,5 +56,18 @@
     "keywords": [
       "GOOD PROJECTS"
     ]
+  },
+  {
+    "id": "497c3553-b390-4835-830f-5a522cb9969f",
+    "title": "HR ROLE",
+    "required_skills": [
+      "English",
+      "MBA"
+    ],
+    "education": "BBA MBA",
+    "experience": 2,
+    "keywords": [
+      "GOOD LEADERSHIP"
+    ]
   }
 ]

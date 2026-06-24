@@ -1,0 +1,28 @@
+.candidate-invite-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+}
+
+.candidate-invite-panel {
+  width: min(620px, 100%);
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 32px;
+  box-shadow: 0 14px 35px rgba(20, 32, 51, 0.07);
+  text-align: center;
+}
+
+.candidate-invite-panel h1 {
+  margin: 0 0 12px;
+  color: #111827;
+}
+
+.candidate-invite-panel p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.6;
+}

@@ -9,6 +9,7 @@ import threading
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 DATA_DIR = BACKEND_DIR / "data"
 INTERVIEW_SESSIONS_FILE = DATA_DIR / "interview_sessions.json"
+INTERVIEW_RESULTS_FILE = DATA_DIR / "interview_results.json"
 _LOCK = threading.Lock()
 
 
@@ -77,6 +78,23 @@ def delete_interview_session(session_id: str) -> bool:
 
         _save_json_list(INTERVIEW_SESSIONS_FILE, kept_sessions)
         return True
+
+
+def clear_interview_sessions() -> int:
+    with _LOCK:
+        sessions = _load_json_list(INTERVIEW_SESSIONS_FILE)
+        _save_json_list(INTERVIEW_SESSIONS_FILE, [])
+        return len(sessions)
+
+
+def clear_interview_results() -> int:
+    if not INTERVIEW_RESULTS_FILE.exists():
+        return 0
+
+    with _LOCK:
+        results = _load_json_list(INTERVIEW_RESULTS_FILE)
+        _save_json_list(INTERVIEW_RESULTS_FILE, [])
+        return len(results)
 
 
 def cleanup_stale_empty_sessions(minutes: int = 30) -> list[str]:

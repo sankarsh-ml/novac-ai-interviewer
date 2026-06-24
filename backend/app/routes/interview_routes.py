@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.services.answer_evaluation_service import evaluate_answer_with_qwen
-from app.services.db_service import get_resume_application, update_application
+from app.services.db_service import get_resume_application, update_application, update_candidate_step
 from app.services.json_storage_service import (
     delete_interview_session,
     get_interview_session,
@@ -26,6 +26,14 @@ from app.services.face_verification_service import (
 )
 from app.services.question_generation_service import generate_interview_questions
 from app.services.qwen_service import is_qwen_available
+from app.services.mongo_interview_service import (
+    complete_interview_candidate,
+    get_candidate_by_application_id,
+    initialize_questions,
+    mark_face_verified,
+    mark_interview_abandoned,
+    update_question_answer,
+)
 
 
 router = APIRouter()
@@ -99,6 +107,21 @@ async def face_verify(application_id: str, frame: UploadFile = File(...)):
                     "score": 0.0,
                     "threshold": DEFAULT_FACE_VERIFY_THRESHOLD,
                     "message": "Resume application not found",
+                },
+            )
+
+        mongo_candidate = get_candidate_by_application_id(application_id)
+
+        if _application_face_verified(application) or (mongo_candidate and mongo_candidate.get("face_verified") is True):
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "match": True,
+                    "score": 1.0,
+                    "threshold": DEFAULT_FACE_VERIFY_THRESHOLD,
+                    "reference_source": "stored_verification",
+                    "message": "Face already verified.",
                 },
             )
 
@@ -306,10 +329,12 @@ def get_interview_questions(application_id: str):
 
     if isinstance(existing_questions, dict) and _has_current_question_contract(existing_questions):
         session = _ensure_interview_session(application_id, application, existing_questions)
+        initialize_questions(application_id, existing_questions)
         return {**existing_questions, "session_id": session.get("session_id")}
 
     result = generate_interview_questions(application)
     session = _ensure_interview_session(application_id, application, result)
+    initialize_questions(application_id, result)
     return {**result, "session_id": session.get("session_id")}
 
 
@@ -468,7 +493,7 @@ async def submit_audio_answer(
         "transcript_file_path": str(transcript_path),
         "transcript": transcript,
         "score": evaluation.get("score", 0),
-        "feedback": evaluation.get("feedback") or evaluation.get("message") or "",
+        "feedback": _answer_feedback(evaluation, transcript),
         "evaluation": evaluation,
         "submitted_at": submitted_at,
     }
@@ -477,6 +502,7 @@ async def submit_audio_answer(
         print("[Interview Audio] Step 7/8: Storing answer in local JSON...", flush=True)
 
         _store_audio_answer(session_id, application, question_payload, question, answer_record)
+        update_question_answer(session_id, question_payload, answer_record)
 
         print("[Interview Audio] Answer stored successfully", flush=True)
 
@@ -542,12 +568,14 @@ def complete_interview(session_id: str):
     )
 
     upsert_interview_session(session)
+    complete_interview_candidate(session_id)
 
-    update_application(
+    update_candidate_step(
         session_id,
         {
             "interview_session": session,
             "interview_status": status,
+            "status": "interview_completed" if status == "completed" else "interview_in_progress",
         },
     )
 
@@ -570,18 +598,18 @@ def cleanup_interview(session_id: str):
     submitted_count = submitted_answer_count(session)
 
     if submitted_count == 0:
-        _delete_session_files(session)
-        delete_interview_session(session_id)
-        update_application(session_id, {"interview_status": "abandoned", "interview_session": {}})
+        mark_interview_abandoned(session_id)
+        update_application(session_id, {"interview_status": "abandoned", "interview_session": session})
         return {
             "success": True,
-            "action": "deleted",
+            "action": "marked_abandoned",
         }
 
     if submitted_count < 5:
         session["status"] = "abandoned"
         session["abandoned_at"] = _now()
         upsert_interview_session(session)
+        mark_interview_abandoned(session_id)
         update_application(session_id, {"interview_status": "abandoned", "interview_session": session})
         return {
             "success": True,
@@ -593,6 +621,7 @@ def cleanup_interview(session_id: str):
     session["completed_at"] = session.get("completed_at") or _now()
     session["total_score"] = _total_score(submitted_answers)
     upsert_interview_session(session)
+    complete_interview_candidate(session_id)
     update_application(session_id, {"interview_status": "completed", "interview_session": session})
 
     return {
@@ -634,6 +663,14 @@ def _find_reference_face_path(application: dict):
             return resolved_path, "aadhaar", checked_paths
 
     return None, None, checked_paths
+
+
+def _application_face_verified(application: dict) -> bool:
+    if application.get("face_verified") is True:
+        return True
+
+    session = application.get("interview_session")
+    return bool(isinstance(session, dict) and session.get("face_verified") is True)
 
 
 def _safe_get(mapping: dict, keys: list[str]):
@@ -839,12 +876,13 @@ def _store_audio_answer(
         if isinstance(answer, dict) and answer.get("submitted_at")
     }
 
-    update_application(
+    update_candidate_step(
         application_id,
         {
             "interview_session": session,
             "interview_answers": interview_answers,
             "interview_status": status,
+            "status": "interview_completed" if status == "completed" else "interview_in_progress",
         },
     )
 
@@ -878,7 +916,16 @@ def _store_face_verified(application_id: str, application: dict, result: dict) -
     )
 
     session = upsert_interview_session(session)
-    update_application(application_id, {"interview_session": session})
+    mark_face_verified(application_id)
+    update_candidate_step(
+        application_id,
+        {
+            "interview_session": session,
+            "face_verified": True,
+            "face_verified_at": session.get("face_verified_at"),
+            "status": "face_verified",
+        },
+    )
 
 
 def _session_questions_from_questions(
@@ -1041,6 +1088,25 @@ def _total_score(answers: list[dict]) -> int | float:
             continue
 
     return int(total) if total.is_integer() else round(total, 1)
+
+
+def _answer_feedback(evaluation: dict, transcript: str) -> str:
+    feedback = (
+        evaluation.get("feedback")
+        or evaluation.get("overall_feedback")
+        or evaluation.get("technical_feedback")
+        or evaluation.get("message")
+        or ""
+    )
+    feedback = str(feedback or "").strip()
+
+    if feedback:
+        return feedback
+
+    if str(transcript or "").strip():
+        return "Answer submitted and evaluated, but detailed feedback was not generated."
+
+    return "No answer submitted."
 
 
 def _safe_file_part(value: str) -> str:

@@ -60,3 +60,87 @@ export async function uploadAadhaar(applicationId, aadhaarFile) {
 
   return data;
 }
+
+
+export async function getCandidateVerificationData(applicationId) {
+  const cleanApplicationId = String(applicationId || "").trim();
+
+  if (!cleanApplicationId) {
+    throw new Error("Candidate ID missing.");
+  }
+
+  return fetchKycJson(
+    `${API_BASE_URL}/api/kyc/candidate/${encodeURIComponent(cleanApplicationId)}`,
+    {
+      method: "GET",
+    },
+    "Could not load candidate verification data."
+  );
+}
+
+
+export async function getVerificationStatus(applicationId) {
+  const cleanApplicationId = String(applicationId || "").trim();
+
+  if (!cleanApplicationId) {
+    throw new Error("Candidate ID missing.");
+  }
+
+  return fetchKycJson(
+    `${API_BASE_URL}/api/kyc/verification-status/${encodeURIComponent(cleanApplicationId)}`,
+    {
+      method: "GET",
+    },
+    "Could not load verification status."
+  );
+}
+
+
+export async function markCandidateVerified(applicationId, referenceSource, faceScore, attempts = 1, matches = 1) {
+  const cleanApplicationId = String(applicationId || "").trim();
+
+  if (!cleanApplicationId) {
+    throw new Error("Candidate ID missing.");
+  }
+
+  return fetchKycJson(
+    `${API_BASE_URL}/api/kyc/verification/mark/${encodeURIComponent(cleanApplicationId)}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        reference_source: referenceSource || "",
+        face_score: typeof faceScore === "number" ? faceScore : null,
+        attempts,
+        matches,
+      }),
+    },
+    "Could not save verification status."
+  );
+}
+
+
+async function fetchKycJson(url, options, fallbackMessage) {
+  let response;
+
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    console.error("[KYC] API request failed:", error);
+    throw new Error("Could not reach backend.");
+  }
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok || !data) {
+    throw new Error(data?.message || data?.detail || `${fallbackMessage} HTTP ${response?.status}`);
+  }
+
+  if (data.success === false) {
+    throw new Error(data.message || fallbackMessage);
+  }
+
+  return data;
+}

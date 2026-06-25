@@ -82,6 +82,11 @@
   cursor: not-allowed;
 }
 
+.continue-button {
+  margin-top: 16px;
+  background: #178044;
+}
+
 .aadhaar-result {
   margin-top: 20px;
   border: 1px solid #b8e2c4;

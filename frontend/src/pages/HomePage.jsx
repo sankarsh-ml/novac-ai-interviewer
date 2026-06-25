@@ -1,7 +1,7 @@
 import "../styles/HomePage.css";
 
 
-function HomePage({ onOpenStudent, onOpenAdmin }) {
+function HomePage({ onOpenAdmin }) {
   return (
     <main className="home-page">
       <section className="home-content">
@@ -10,11 +10,6 @@ function HomePage({ onOpenStudent, onOpenAdmin }) {
         <p className="subtitle">Upload resumes and prepare them for ATS screening</p>
 
         <div className="role-grid">
-          <button className="role-card" type="button" onClick={onOpenStudent}>
-            <span className="role-letter">S</span>
-            <span>Student</span>
-          </button>
-
           <button className="role-card" type="button" onClick={onOpenAdmin}>
             <span className="role-letter admin">A</span>
             <span>Admin</span>

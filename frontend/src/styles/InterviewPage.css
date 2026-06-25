@@ -95,7 +95,9 @@
 .start-interview-button,
 .submit-answer-button,
 .next-question-button,
-.finish-interview-button {
+.finish-interview-button,
+.record-button,
+.stop-record-button {
   min-height: 44px;
   border: 0;
   border-radius: 8px;
@@ -107,11 +109,13 @@
 .camera-button.start,
 .start-interview-button,
 .next-question-button,
+.record-button,
 .finish-interview-button {
   background: #178044;
 }
 
-.camera-button.stop {
+.camera-button.stop,
+.stop-record-button {
   background: #c2413b;
 }
 
@@ -130,7 +134,9 @@
 .start-interview-button:disabled,
 .submit-answer-button:disabled,
 .next-question-button:disabled,
-.finish-interview-button:disabled {
+.finish-interview-button:disabled,
+.record-button:disabled,
+.stop-record-button:disabled {
   background: #94a9c4;
   cursor: not-allowed;
 }
@@ -198,6 +204,10 @@
   grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 10px;
   margin-top: 12px;
+}
+
+.face-details.compact {
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
 }
 
 .face-details span,
@@ -313,6 +323,35 @@
   min-width: 0;
 }
 
+.voice-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.voice-card strong {
+  color: #111827;
+}
+
+.voice-card p {
+  margin: 6px 0 0;
+  color: #536173;
+  line-height: 1.4;
+}
+
+.voice-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .answer-label {
   display: block;
   color: #334155;
@@ -339,6 +378,11 @@
   outline: 3px solid rgba(31, 95, 159, 0.16);
 }
 
+.answer-input[readonly] {
+  background: #f8fafc;
+  cursor: default;
+}
+
 .camera-mini-card {
   width: 286px;
   border: 1px solid #d9e2ef;
@@ -350,15 +394,29 @@
 }
 
 .face-mini-status {
-  display: grid;
-  gap: 5px;
+  display: flex;
+  justify-content: center;
   margin-top: 10px;
-  color: #334155;
-  font-size: 0.88rem;
 }
 
 .face-mini-status strong {
+  display: inline-flex;
+  border-radius: 999px;
+  background: #dcfce7;
   color: #0f766e;
+  padding: 7px 12px;
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.submission-success {
+  margin: 12px 0 0;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: #166534;
+  padding: 12px;
+  font-weight: 900;
 }
 
 .evaluation-result {
@@ -554,6 +612,15 @@
   .question-progress-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .voice-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .voice-actions {
+    justify-content: flex-start;
   }
 }
 

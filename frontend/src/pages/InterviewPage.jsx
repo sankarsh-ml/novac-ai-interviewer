@@ -1,45 +1,49 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  completeInterview,
+  completeInterviewWithBeacon,
   evaluateInterviewAnswer,
-  getInterviewQuestions,
-  verifyFaceFrame,
+  startInterview,
+  transcribeInterviewAudio,
 } from "../api/interviewApi.js";
 import "../styles/InterviewPage.css";
 
 
-function InterviewPage({ applicationSummary, onBackHome }) {
+function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const faceIntervalRef = useRef(null);
-  const faceAttemptCountRef = useRef(0);
-  const faceMatchCountRef = useRef(0);
-  const faceVerificationDoneRef = useRef(false);
-  const isFaceRequestInFlightRef = useRef(false);
+  const audioStreamRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const autoStartInFlightRef = useRef(false);
   const [cameraError, setCameraError] = useState("");
-  const [isCameraRunning, setIsCameraRunning] = useState(false);
-  const [faceStatus, setFaceStatus] = useState("idle");
-  const [faceScore, setFaceScore] = useState(null);
-  const [faceMatchCount, setFaceMatchCount] = useState(0);
-  const [faceAttemptCount, setFaceAttemptCount] = useState(0);
+  const [isCameraRunning, setIsCameraRunning] = useState(Boolean(cameraSession?.isCameraRunning));
   const [isFaceVerified, setIsFaceVerified] = useState(false);
-  const [faceReferenceSource, setFaceReferenceSource] = useState("");
-  const [faceError, setFaceError] = useState("");
   const [isInterviewStarted, setIsInterviewStarted] = useState(false);
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [questions, setQuestions] = useState([]);
   const [questionSource, setQuestionSource] = useState("");
   const [qwenWarning, setQwenWarning] = useState("");
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [currentAnswer, setCurrentAnswer] = useState("");
+  const [currentTranscript, setCurrentTranscript] = useState("");
+  const [currentAudioPath, setCurrentAudioPath] = useState("");
   const [answers, setAnswers] = useState({});
+  const [transcripts, setTranscripts] = useState({});
+  const [audioPaths, setAudioPaths] = useState({});
   const [evaluations, setEvaluations] = useState({});
   const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
+  const [isPreparingRecording, setIsPreparingRecording] = useState(false);
+  const [isRecordingAnswer, setIsRecordingAnswer] = useState(false);
+  const [isTranscribingAnswer, setIsTranscribingAnswer] = useState(false);
   const [currentEvaluation, setCurrentEvaluation] = useState(null);
   const [hasSubmittedCurrentAnswer, setHasSubmittedCurrentAnswer] = useState(false);
-  const [interviewCompleted, setInterviewCompleted] = useState(false);
+  const [interviewCompleted, setInterviewCompleted] = useState(isInterviewCompleted(applicationSummary));
   const [questionGenerationError, setQuestionGenerationError] = useState("");
+  const [hasAttemptedQuestionLoad, setHasAttemptedQuestionLoad] = useState(false);
   const [answerError, setAnswerError] = useState("");
+  const [voiceError, setVoiceError] = useState("");
+  const [completionError, setCompletionError] = useState("");
 
   useEffect(() => {
     return () => {
@@ -48,82 +52,146 @@ function InterviewPage({ applicationSummary, onBackHome }) {
   }, []);
 
   useEffect(() => {
-    if (videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-    }
-  }, [isInterviewStarted, interviewCompleted, isCameraRunning]);
-
-  useEffect(() => {
-    if (!isCameraRunning || isFaceVerified) {
-      clearFaceVerificationInterval();
+    if (isInterviewCompleted(applicationSummary)) {
+      setInterviewCompleted(true);
+      setIsInterviewStarted(true);
+      setHasAttemptedQuestionLoad(true);
       return;
     }
 
-    setFaceStatus("verifying");
-    clearFaceVerificationInterval();
+    if (!isCandidateFaceVerified(applicationSummary)) {
+      return;
+    }
 
-    faceIntervalRef.current = window.setInterval(() => {
-      captureAndVerifyFaceFrame();
-    }, 2000);
+    setIsFaceVerified(true);
+  }, [applicationSummary]);
+
+  useEffect(() => {
+    const stream = getReusableCameraStream(cameraSession?.stream) || getReusableCameraStream(streamRef.current);
+
+    if (!stream) {
+      return;
+    }
+
+    attachCameraStream(stream, "shared-camera").catch((error) => {
+      console.error("[Interview] Could not attach camera preview:", error);
+      setCameraError("Camera access is required for the interview. Please allow camera permission and refresh.");
+    });
+  }, [cameraSession?.stream, isInterviewStarted, interviewCompleted]);
+
+  useEffect(() => {
+    if (!isInterviewStarted || interviewCompleted || !applicationSummary?.application_id) {
+      return;
+    }
+
+    const handleBeforeUnload = () => {
+      completeInterviewWithBeacon(applicationSummary.application_id);
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
 
     return () => {
-      clearFaceVerificationInterval();
+      window.removeEventListener("beforeunload", handleBeforeUnload);
     };
-  }, [isCameraRunning, isFaceVerified, applicationSummary?.application_id]);
+  }, [applicationSummary?.application_id, interviewCompleted, isInterviewStarted]);
 
-  const startCamera = async () => {
-    setCameraError("");
-    resetFaceVerification();
+  useEffect(() => {
+    if (!applicationSummary?.application_id || interviewCompleted) {
+      return;
+    }
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      streamRef.current = stream;
-      if (videoRef.current) {
+    ensureCameraOn().catch(() => {});
+  }, [applicationSummary?.application_id, interviewCompleted]);
+
+  async function attachCameraStream(stream, context) {
+    const videoTracks = stream?.getVideoTracks?.() || [];
+    console.log("[Interview] camera stream status:", {
+      candidateId: applicationSummary?.application_id,
+      context,
+      streamExists: Boolean(stream),
+      active: Boolean(stream?.active),
+      videoTracks: videoTracks.length,
+      videoTrackStates: videoTracks.map((track) => ({
+        id: track.id,
+        label: track.label,
+        enabled: track.enabled,
+        muted: track.muted,
+        readyState: track.readyState,
+      })),
+    });
+
+    if (!hasLiveVideoTrack(stream)) {
+      throw new Error("Camera stream has no live video track.");
+    }
+
+    streamRef.current = stream;
+
+    if (videoRef.current) {
+      if (videoRef.current.srcObject !== stream) {
         videoRef.current.srcObject = stream;
       }
-      setIsCameraRunning(true);
+
+      await videoRef.current.play();
+    }
+
+    setIsCameraRunning(true);
+    return stream;
+  }
+
+  function stopAudioStream(audioStream = audioStreamRef.current) {
+    if (!audioStream) {
+      return;
+    }
+
+    audioStream.getTracks?.().forEach((track) => {
+      if (track.kind === "audio") {
+        track.stop();
+      }
+    });
+
+    if (audioStreamRef.current === audioStream) {
+      audioStreamRef.current = null;
+    }
+  }
+
+  const ensureCameraOn = async () => {
+    setCameraError("");
+
+    try {
+      const reusableStream = getReusableCameraStream(cameraSession?.stream) || getReusableCameraStream(streamRef.current);
+      const stream = reusableStream || (
+        cameraSession?.startCamera
+          ? await cameraSession.startCamera()
+          : await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+      );
+
+      if (!hasLiveVideoTrack(stream)) {
+        throw new Error("Camera stream has no live video track.");
+      }
+
+      await attachCameraStream(stream, reusableStream ? "reused-camera" : "new-camera");
+      return stream;
+
     } catch (error) {
-      console.error("Camera permission failed:", error);
-      setCameraError("Camera permission failed. Please allow camera and microphone access.");
+      console.error("[Interview] Camera unavailable:", error);
+      setCameraError("Camera access is required for the interview. Please allow camera permission and refresh.");
+      throw new Error("Camera access is required for the interview. Please allow camera permission and refresh.");
     }
   };
 
-  const stopCamera = () => {
-    clearFaceVerificationInterval();
+  const startCamera = ensureCameraOn;
 
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
+  const stopCamera = () => {
+    stopActiveRecording();
+    stopAudioStream();
+    cameraSession?.stopCamera?.();
+    streamRef.current = null;
 
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
 
     setIsCameraRunning(false);
-  };
-
-  const clearFaceVerificationInterval = () => {
-    if (faceIntervalRef.current) {
-      window.clearInterval(faceIntervalRef.current);
-      faceIntervalRef.current = null;
-    }
-  };
-
-  const resetFaceVerification = () => {
-    clearFaceVerificationInterval();
-    faceAttemptCountRef.current = 0;
-    faceMatchCountRef.current = 0;
-    faceVerificationDoneRef.current = false;
-    isFaceRequestInFlightRef.current = false;
-    setFaceStatus("idle");
-    setFaceScore(null);
-    setFaceMatchCount(0);
-    setFaceAttemptCount(0);
-    setIsFaceVerified(false);
-    setFaceReferenceSource("");
-    setFaceError("");
-    resetInterviewState();
   };
 
   const resetInterviewState = () => {
@@ -133,90 +201,22 @@ function InterviewPage({ applicationSummary, onBackHome }) {
     setQuestionSource("");
     setQwenWarning("");
     setCurrentQuestionIndex(0);
-    setCurrentAnswer("");
+    setCurrentTranscript("");
+    setCurrentAudioPath("");
     setAnswers({});
+    setTranscripts({});
+    setAudioPaths({});
     setEvaluations({});
     setIsSubmittingAnswer(false);
+    setIsPreparingRecording(false);
+    setIsRecordingAnswer(false);
+    setIsTranscribingAnswer(false);
     setCurrentEvaluation(null);
     setHasSubmittedCurrentAnswer(false);
     setInterviewCompleted(false);
     setQuestionGenerationError("");
     setAnswerError("");
-  };
-
-  const captureAndVerifyFaceFrame = async () => {
-    if (
-      faceVerificationDoneRef.current ||
-      isFaceRequestInFlightRef.current ||
-      !videoRef.current
-    ) {
-      return;
-    }
-
-    const video = videoRef.current;
-
-    if (!video.videoWidth || !video.videoHeight || video.readyState < 2) {
-      return;
-    }
-
-    isFaceRequestInFlightRef.current = true;
-
-    try {
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-
-      const context = canvas.getContext("2d");
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      const blob = await new Promise((resolve) => {
-        canvas.toBlob(resolve, "image/jpeg", 0.9);
-      });
-
-      if (!blob) {
-        throw new Error("Could not capture webcam frame.");
-      }
-
-      const result = await verifyFaceFrame(applicationSummary?.application_id, blob);
-      const nextAttemptCount = faceAttemptCountRef.current + 1;
-      const nextMatchCount = faceMatchCountRef.current + (result.match ? 1 : 0);
-
-      faceAttemptCountRef.current = nextAttemptCount;
-      faceMatchCountRef.current = nextMatchCount;
-
-      setFaceAttemptCount(nextAttemptCount);
-      setFaceMatchCount(nextMatchCount);
-      setFaceScore(typeof result.score === "number" ? result.score : null);
-      setFaceReferenceSource(result.reference_source || "");
-      setFaceError(result.success === false ? getFaceBackendMessage(result) : "");
-
-      if (nextMatchCount >= 3) {
-        faceVerificationDoneRef.current = true;
-        setIsFaceVerified(true);
-        setFaceStatus("passed");
-        clearFaceVerificationInterval();
-        return;
-      }
-
-      if (nextAttemptCount >= 5) {
-        faceVerificationDoneRef.current = true;
-        setIsFaceVerified(false);
-        setFaceStatus("failed");
-        clearFaceVerificationInterval();
-        return;
-      }
-
-      setFaceStatus("verifying");
-    } catch (error) {
-      console.error("Face verification failed:", error);
-      faceVerificationDoneRef.current = true;
-      setIsFaceVerified(false);
-      setFaceStatus("failed");
-      setFaceError(error.message || "Face verification failed.");
-      clearFaceVerificationInterval();
-    } finally {
-      isFaceRequestInFlightRef.current = false;
-    }
+    setVoiceError("");
   };
 
   const handleStartInterview = async () => {
@@ -225,31 +225,91 @@ function InterviewPage({ applicationSummary, onBackHome }) {
     setQwenWarning("");
 
     try {
-      const response = await getInterviewQuestions(applicationSummary?.application_id);
-      const loadedQuestions = Array.isArray(response.questions) ? response.questions : [];
+      const stream = getReusableCameraStream(cameraSession?.stream) || getReusableCameraStream(streamRef.current);
+      if (stream) {
+        await attachCameraStream(stream, "start-interview");
+      } else {
+        await ensureCameraOn();
+      }
+
+      console.log("[Interview] candidateId from route/state:", applicationSummary?.application_id);
+      console.log("[Interview] verification check:", {
+        aadhaarVerified: isCandidateAadhaarVerified(applicationSummary),
+        faceVerified: isCandidateFaceVerified(applicationSummary),
+      });
+      const response = await startInterview(applicationSummary?.application_id);
+      console.log("[Interview] question bank/start response:", response);
+
+      if (
+        response.status === "completed" ||
+        response.interview_status === "completed" ||
+        response.interviewStatus === "completed" ||
+        response.interview_completed === true
+      ) {
+        setInterviewCompleted(true);
+        setIsInterviewStarted(true);
+        return;
+      }
+
+      const loadedQuestions = normalizeInterviewQuestions(response.questions);
+      console.log("[Interview] final questions array length:", loadedQuestions.length);
 
       if (!loadedQuestions.length) {
-        throw new Error("No interview questions were returned.");
+        throw new Error(response.message || "No question bank found for this role.");
       }
 
       setQuestions(loadedQuestions);
-      setQuestionSource(response.source || "");
+      setQuestionSource(response.source || response.question_source || "");
       setQwenWarning(response.qwen_warning || response.qwen_error || "");
       setCurrentQuestionIndex(0);
-      setCurrentAnswer("");
+      setCurrentTranscript("");
+      setCurrentAudioPath("");
       setCurrentEvaluation(null);
       setHasSubmittedCurrentAnswer(false);
       setInterviewCompleted(false);
       setIsInterviewStarted(true);
     } catch (error) {
-      setQuestionGenerationError(error.message || "Could not start interview.");
+      setQuestionGenerationError(error.message || "No question bank found for this role.");
+      setIsInterviewStarted(false);
     } finally {
+      setHasAttemptedQuestionLoad(true);
       setIsGeneratingQuestions(false);
     }
   };
 
+  useEffect(() => {
+    if (
+      !applicationSummary?.application_id ||
+      !isCandidateAadhaarVerified(applicationSummary) ||
+      !isCandidateFaceVerified(applicationSummary) ||
+      isInterviewStarted ||
+      interviewCompleted ||
+      isGeneratingQuestions ||
+      hasAttemptedQuestionLoad
+    ) {
+      return;
+    }
+
+    if (autoStartInFlightRef.current) {
+      return;
+    }
+
+    autoStartInFlightRef.current = true;
+    handleStartInterview().finally(() => {
+      autoStartInFlightRef.current = false;
+    });
+  }, [
+    applicationSummary?.application_id,
+    cameraSession?.stream,
+    interviewCompleted,
+    hasAttemptedQuestionLoad,
+    isGeneratingQuestions,
+    isInterviewStarted,
+  ]);
+
   const handleSubmitAnswer = async () => {
     const question = questions[currentQuestionIndex];
+    const isSubmittingFinalQuestion = currentQuestionIndex === questions.length - 1;
 
     if (!question || hasSubmittedCurrentAnswer) {
       return;
@@ -257,26 +317,54 @@ function InterviewPage({ applicationSummary, onBackHome }) {
 
     setIsSubmittingAnswer(true);
     setAnswerError("");
+    setCompletionError("");
 
     try {
-      const evaluation = await evaluateInterviewAnswer(
+      const response = await evaluateInterviewAnswer(
         applicationSummary?.application_id,
         question.id,
-        currentAnswer
+        currentTranscript,
+        {
+          transcript: currentTranscript,
+          audioPath: currentAudioPath,
+        }
       );
 
       setAnswers((currentAnswers) => ({
         ...currentAnswers,
-        [question.id]: currentAnswer,
+        [question.id]: currentTranscript,
+      }));
+      setTranscripts((currentTranscripts) => ({
+        ...currentTranscripts,
+        [question.id]: currentTranscript,
+      }));
+      setAudioPaths((currentAudioPaths) => ({
+        ...currentAudioPaths,
+        [question.id]: currentAudioPath,
       }));
       setEvaluations((currentEvaluations) => ({
         ...currentEvaluations,
-        [question.id]: evaluation,
+        [question.id]: response,
       }));
-      setCurrentEvaluation(evaluation);
+      setCurrentEvaluation(response);
       setHasSubmittedCurrentAnswer(true);
+
+      if (isSubmittingFinalQuestion) {
+        try {
+          await completeInterview(applicationSummary?.application_id);
+          setInterviewCompleted(true);
+          stopCamera();
+        } catch (error) {
+          setCompletionError(error.message || "Could not complete interview.");
+        }
+      }
     } catch (error) {
-      setAnswerError(error.message || "Could not evaluate answer.");
+      const message = error.message || "Could not evaluate answer.";
+      setAnswerError(
+        message.toLowerCase().includes("qwen grading failed")
+          ? "Qwen grading failed. Please retry submission."
+          : message
+      );
     } finally {
       setIsSubmittingAnswer(false);
     }
@@ -286,60 +374,230 @@ function InterviewPage({ applicationSummary, onBackHome }) {
     const nextIndex = currentQuestionIndex + 1;
     const nextQuestion = questions[nextIndex];
 
+    stopActiveRecording();
     setCurrentQuestionIndex(nextIndex);
-    setCurrentAnswer(answers[nextQuestion?.id] || "");
+    setCurrentTranscript(transcripts[nextQuestion?.id] || "");
+    setCurrentAudioPath(audioPaths[nextQuestion?.id] || "");
     setCurrentEvaluation(nextQuestion ? evaluations[nextQuestion.id] || null : null);
     setHasSubmittedCurrentAnswer(Boolean(nextQuestion && evaluations[nextQuestion.id]));
     setAnswerError("");
+    setVoiceError("");
   };
 
-  const handleFinishInterview = () => {
-    setInterviewCompleted(true);
+  const handleStartRecording = async () => {
+    setVoiceError("");
+    setCurrentTranscript("");
+    setCurrentAudioPath("");
+
+    if (!window.MediaRecorder) {
+      setVoiceError("Audio recording is not supported in this browser.");
+      return;
+    }
+
+    if (isPreparingRecording || isRecordingAnswer || isTranscribingAnswer) {
+      return;
+    }
+
+    setIsPreparingRecording(true);
+
+    try {
+      const recordingQuestionIndex = currentQuestionIndex;
+      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = audioStream;
+      const audioTracks = audioStream.getAudioTracks();
+      const [audioTrack] = audioTracks;
+
+      console.log("[Interview] audio stream created:", {
+        candidateId: applicationSummary?.application_id,
+        audioTracks: audioTracks.length,
+        audioTrack: audioTrack
+          ? {
+              id: audioTrack.id,
+              label: audioTrack.label,
+              enabled: audioTrack.enabled,
+              muted: audioTrack.muted,
+              readyState: audioTrack.readyState,
+            }
+          : null,
+      });
+
+      if (!audioTrack || audioTrack.readyState !== "live") {
+        stopAudioStream(audioStream);
+        setVoiceError("Microphone is not available. Please allow microphone access and try again.");
+        setIsPreparingRecording(false);
+        return;
+      }
+
+      const recorderOptions = getRecorderOptions();
+      const recorder = new MediaRecorder(audioStream, recorderOptions);
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = recorder;
+
+      console.log("[Interview] MediaRecorder prepared:", {
+        candidateId: applicationSummary?.application_id,
+        requestedMimeType: recorderOptions.mimeType || "",
+        recorderMimeType: recorder.mimeType || "",
+        stateBeforeStart: recorder.state,
+      });
+
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = (event) => {
+        console.error("[Interview] MediaRecorder error:", event.error || event);
+        setVoiceError("Could not start recording. Please allow microphone access and try again.");
+      };
+
+      recorder.onstop = async () => {
+        const chunks = audioChunksRef.current;
+        audioChunksRef.current = [];
+        mediaRecorderRef.current = null;
+        stopAudioStream(audioStream);
+        setIsPreparingRecording(false);
+        setIsRecordingAnswer(false);
+
+        if (!chunks.length) {
+          setVoiceError("No audio captured. Please record again.");
+          return;
+        }
+
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+
+        console.log("[Interview] recorded blob:", {
+          candidateId: applicationSummary?.application_id,
+          questionIndex: recordingQuestionIndex,
+          size: blob.size,
+          type: blob.type,
+        });
+
+        if (!blob.size) {
+          setVoiceError("No audio captured. Please record again.");
+          return;
+        }
+
+        setIsTranscribingAnswer(true);
+
+        try {
+          const filename = `answer_${applicationSummary?.application_id}_${recordingQuestionIndex}.webm`;
+          const response = await transcribeInterviewAudio(applicationSummary?.application_id, blob, filename);
+          console.log("[Interview] Whisper response:", response);
+          const transcript = response.transcript || "";
+          const audioPath = response.audioPath || response.audio_path || "";
+
+          if (!transcript.trim()) {
+            throw new Error("Could not transcribe answer. Please record again.");
+          }
+
+          setCurrentTranscript(transcript);
+          setCurrentAudioPath(audioPath);
+        } catch (error) {
+          setCurrentTranscript("");
+          setCurrentAudioPath("");
+          setVoiceError(error.message || "Could not transcribe answer. Please record again.");
+        } finally {
+          setIsTranscribingAnswer(false);
+        }
+      };
+
+      if (recorder.state !== "inactive") {
+        throw new Error(`Recorder is not ready. Current state: ${recorder.state}`);
+      }
+
+      recorder.start();
+      console.log("[Interview] MediaRecorder start success:", {
+        candidateId: applicationSummary?.application_id,
+        state: recorder.state,
+      });
+      setIsPreparingRecording(false);
+      setIsRecordingAnswer(true);
+    } catch (error) {
+      console.error("[Interview] MediaRecorder start failed:", error);
+      stopAudioStream();
+      mediaRecorderRef.current = null;
+      setVoiceError("Could not start recording. Please allow microphone access and try again.");
+      setIsPreparingRecording(false);
+      setIsRecordingAnswer(false);
+    }
   };
 
-  const handleBackHome = () => {
+  const handleStopRecording = () => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const stopActiveRecording = () => {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+      return;
+    }
+
+    mediaRecorderRef.current = null;
+    setIsPreparingRecording(false);
+    setIsRecordingAnswer(false);
+    stopAudioStream();
+  };
+
+  const handleFinishInterview = async () => {
+    setCompletionError("");
+
+    try {
+      await completeInterview(applicationSummary?.application_id);
+      setInterviewCompleted(true);
+      stopCamera();
+    } catch (error) {
+      setCompletionError(error.message || "Could not complete interview.");
+    }
+  };
+
+  const handleBackHome = async () => {
+    if (isInterviewStarted && !interviewCompleted) {
+      try {
+        await completeInterview(applicationSummary?.application_id);
+      } catch (error) {
+        console.error("Could not finalize partial interview:", error);
+      }
+    }
+
     stopCamera();
     onBackHome();
   };
 
-  const faceStatusText = (() => {
-    if (faceStatus === "passed") {
-      return "Face verified successfully";
-    }
-
-    if (faceStatus === "failed") {
-      return "Face verification failed. Please ensure your face is clearly visible.";
-    }
-
-    if (isCameraRunning) {
-      return "Verifying face...";
-    }
-
-    return "Start camera to verify face.";
-  })();
   const currentQuestion = questions[currentQuestionIndex];
   const isFinalQuestion = currentQuestionIndex === questions.length - 1;
-  const sourceText = questionSource === "qwen" ? "Generated by Qwen" : "Generated by fallback engine";
+  const sourceText = getQuestionSourceText(questionSource);
+
+  if (!applicationSummary) {
+    return (
+      <main className="interview-page">
+        <section className="interview-panel precheck">
+          <header className="interview-header">
+            <p className="eyebrow">Interview</p>
+            <h1>Loading interview...</h1>
+            <p>Please wait while we load candidate details.</p>
+          </header>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="interview-page">
       <section className={`interview-panel ${isInterviewStarted ? "active" : "precheck"}`}>
-        <button className="back-button" type="button" onClick={handleBackHome}>
-          Back Home
-        </button>
+        {!interviewCompleted && (
+          <button className="back-button" type="button" onClick={handleBackHome}>
+            Back Home
+          </button>
+        )}
 
         {!isInterviewStarted && (
           <PreInterviewView
             videoRef={videoRef}
             isCameraRunning={isCameraRunning}
             isFaceVerified={isFaceVerified}
-            faceStatus={faceStatus}
-            faceStatusText={faceStatusText}
-            faceAttemptCount={faceAttemptCount}
-            faceMatchCount={faceMatchCount}
-            faceScore={faceScore}
-            faceReferenceSource={faceReferenceSource}
-            faceError={faceError}
             cameraError={cameraError}
             isGeneratingQuestions={isGeneratingQuestions}
             questionGenerationError={questionGenerationError}
@@ -353,34 +611,33 @@ function InterviewPage({ applicationSummary, onBackHome }) {
           <ActiveInterviewView
             videoRef={videoRef}
             isCameraRunning={isCameraRunning}
-            faceScore={faceScore}
-            faceReferenceSource={faceReferenceSource}
             sourceText={sourceText}
-            qwenWarning={qwenWarning}
             question={currentQuestion}
             questionNumber={currentQuestionIndex + 1}
             totalQuestions={questions.length}
-            currentAnswer={currentAnswer}
+            currentTranscript={currentTranscript}
             currentEvaluation={currentEvaluation}
             answerError={answerError}
+            voiceError={voiceError}
             isSubmittingAnswer={isSubmittingAnswer}
+            isPreparingRecording={isPreparingRecording}
+            isRecordingAnswer={isRecordingAnswer}
+            isTranscribingAnswer={isTranscribingAnswer}
             hasSubmittedCurrentAnswer={hasSubmittedCurrentAnswer}
             isFinalQuestion={isFinalQuestion}
-            onAnswerChange={setCurrentAnswer}
+            onStartRecording={handleStartRecording}
+            onStopRecording={handleStopRecording}
             onSubmitAnswer={handleSubmitAnswer}
             onNextQuestion={handleNextQuestion}
             onFinishInterview={handleFinishInterview}
-            onStopCamera={stopCamera}
+            completionError={completionError}
+            cameraError={cameraError}
+            onEnableCamera={ensureCameraOn}
           />
         )}
 
         {isInterviewStarted && interviewCompleted && (
-          <InterviewSummary
-            questions={questions}
-            evaluations={evaluations}
-            sourceText={sourceText}
-            onBackHome={handleBackHome}
-          />
+          <InterviewSummary />
         )}
       </section>
     </main>
@@ -392,13 +649,6 @@ function PreInterviewView({
   videoRef,
   isCameraRunning,
   isFaceVerified,
-  faceStatus,
-  faceStatusText,
-  faceAttemptCount,
-  faceMatchCount,
-  faceScore,
-  faceReferenceSource,
-  faceError,
   cameraError,
   isGeneratingQuestions,
   questionGenerationError,
@@ -411,7 +661,7 @@ function PreInterviewView({
       <header className="interview-header">
         <p className="eyebrow">Interview</p>
         <h1>Interview Session</h1>
-        <p>Please complete face verification before starting the interview.</p>
+        <p>Start your camera before beginning. Voice recording will use your microphone.</p>
       </header>
 
       <CameraPreview videoRef={videoRef} isCameraRunning={isCameraRunning} size="large" />
@@ -426,16 +676,6 @@ function PreInterviewView({
       </div>
 
       {cameraError && <p className="error-message">{cameraError}</p>}
-
-      <FaceStatusCard
-        faceStatus={faceStatus}
-        faceStatusText={faceStatusText}
-        faceAttemptCount={faceAttemptCount}
-        faceMatchCount={faceMatchCount}
-        faceScore={faceScore}
-        faceReferenceSource={faceReferenceSource}
-        faceError={faceError}
-      />
 
       {!isFaceVerified && (
         <section className="interview-placeholder">
@@ -452,7 +692,7 @@ function PreInterviewView({
             className="start-interview-button"
             type="button"
             onClick={onStartInterview}
-            disabled={isGeneratingQuestions}
+            disabled={!isCameraRunning || isGeneratingQuestions}
           >
             {isGeneratingQuestions ? "Preparing Interview..." : "Start Interview"}
           </button>
@@ -467,24 +707,28 @@ function PreInterviewView({
 function ActiveInterviewView({
   videoRef,
   isCameraRunning,
-  faceScore,
-  faceReferenceSource,
   sourceText,
-  qwenWarning,
   question,
   questionNumber,
   totalQuestions,
-  currentAnswer,
+  currentTranscript,
   currentEvaluation,
   answerError,
+  voiceError,
   isSubmittingAnswer,
+  isPreparingRecording,
+  isRecordingAnswer,
+  isTranscribingAnswer,
   hasSubmittedCurrentAnswer,
   isFinalQuestion,
-  onAnswerChange,
+  onStartRecording,
+  onStopRecording,
   onSubmitAnswer,
   onNextQuestion,
   onFinishInterview,
-  onStopCamera,
+  completionError,
+  cameraError,
+  onEnableCamera,
 }) {
   return (
     <section className="active-interview">
@@ -501,34 +745,66 @@ function ActiveInterviewView({
           <p className="expected-focus">Expected focus: {question.expected_focus}</p>
         )}
         <p className="question-source">{sourceText}</p>
-        {qwenWarning && <p className="qwen-warning">{qwenWarning}</p>}
       </header>
 
       <div className="interview-workspace">
         <section className="answer-panel">
+          <div className="voice-card">
+            <div>
+              <strong>Voice answer</strong>
+              <p>
+                {isRecordingAnswer
+                  ? "Recording in progress..."
+                  : isTranscribingAnswer
+                    ? "Transcribing with Whisper..."
+                    : currentTranscript
+                      ? "Transcript is ready. Manual typing is disabled for interview integrity."
+                      : "Record your answer. Manual typing is disabled for interview integrity."}
+              </p>
+            </div>
+            <div className="voice-actions">
+              <button
+                className="record-button"
+                type="button"
+                onClick={onStartRecording}
+                disabled={isPreparingRecording || isRecordingAnswer || isTranscribingAnswer || hasSubmittedCurrentAnswer}
+              >
+                {isPreparingRecording ? "Preparing..." : "Start Recording"}
+              </button>
+              <button
+                className="stop-record-button"
+                type="button"
+                onClick={onStopRecording}
+                disabled={!isRecordingAnswer}
+              >
+                Stop
+              </button>
+            </div>
+          </div>
+          {voiceError && <p className="answer-error">{voiceError}</p>}
+
           <label className="answer-label" htmlFor={`answer-${question.id}`}>
-            Candidate answer
+            Transcript
           </label>
           <textarea
             id={`answer-${question.id}`}
             className="answer-input active-answer-input"
-            value={currentAnswer}
-            onChange={(event) => onAnswerChange(event.target.value)}
-            placeholder="Type your answer here..."
+            value={currentTranscript}
+            placeholder="Your transcribed answer will appear here after recording."
             rows={9}
-            disabled={hasSubmittedCurrentAnswer}
+            readOnly
           />
           <button
             className="submit-answer-button"
             type="button"
             onClick={onSubmitAnswer}
-            disabled={!currentAnswer.trim() || isSubmittingAnswer || hasSubmittedCurrentAnswer}
+            disabled={!currentTranscript.trim() || isSubmittingAnswer || isRecordingAnswer || isTranscribingAnswer || hasSubmittedCurrentAnswer}
           >
-            {isSubmittingAnswer ? "Evaluating..." : "Submit Answer"}
+            {isSubmittingAnswer ? "Submitting..." : "Submit Answer"}
           </button>
 
           {answerError && <p className="answer-error">{answerError}</p>}
-          {currentEvaluation && <EvaluationResult evaluation={currentEvaluation} />}
+          {currentEvaluation && <p className="submission-success">Answer submitted successfully.</p>}
 
           {hasSubmittedCurrentAnswer && !isFinalQuestion && (
             <button className="next-question-button" type="button" onClick={onNextQuestion}>
@@ -541,18 +817,20 @@ function ActiveInterviewView({
               Finish Interview
             </button>
           )}
+          {completionError && <p className="answer-error">{completionError}</p>}
         </section>
 
         <aside className="camera-mini-card">
           <CameraPreview videoRef={videoRef} isCameraRunning={isCameraRunning} size="small" />
+          {!isCameraRunning && (
+            <button className="camera-button start compact" type="button" onClick={onEnableCamera}>
+              Enable Camera
+            </button>
+          )}
+          {cameraError && <p className="answer-error">{cameraError}</p>}
           <div className="face-mini-status">
-            <strong>Face verified</strong>
-            <span>Score: {faceScore === null ? "--" : faceScore.toFixed(4)}</span>
-            <span>Reference: {faceReferenceSource ? toTitleCase(faceReferenceSource) : "--"}</span>
+            <strong>Face Verified</strong>
           </div>
-          <button className="camera-button stop compact" type="button" onClick={onStopCamera} disabled={!isCameraRunning}>
-            Stop Camera
-          </button>
         </aside>
       </div>
     </section>
@@ -560,74 +838,11 @@ function ActiveInterviewView({
 }
 
 
-function InterviewSummary({ questions, evaluations, sourceText, onBackHome }) {
-  const rows = questions.map((question, index) => ({
-    question,
-    index,
-    evaluation: evaluations[question.id],
-  }));
-  const answeredRows = rows.filter((row) => row.evaluation);
-  const averageScore = calculateAverageScore(answeredRows.map((row) => row.evaluation?.score));
-  const resultLabel = getResultLabel(averageScore);
-  const finalFeedback = getFinalFeedback(answeredRows);
-
+function InterviewSummary() {
   return (
     <section className="interview-summary">
-      <p className="question-source">{sourceText}</p>
-      <h1>Interview Completed</h1>
-      <div className="summary-stats">
-        <SummaryStat label="Answered" value={`${answeredRows.length}/${questions.length}`} />
-        <SummaryStat label="Average score" value={`${averageScore}/10`} />
-        <SummaryStat label="Result" value={resultLabel} />
-      </div>
-
-      <div className="score-table">
-        {rows.map(({ question, index, evaluation }) => (
-          <article className="score-row" key={question.id}>
-            <span>Q{index + 1}</span>
-            <div>
-              <strong>{question.category}</strong>
-              <p>{question.question}</p>
-            </div>
-            <b>{evaluation?.score ?? 0}/10</b>
-          </article>
-        ))}
-      </div>
-
-      {finalFeedback && (
-        <section className="final-feedback">
-          <strong>Final feedback</strong>
-          <p>{finalFeedback}</p>
-        </section>
-      )}
-
-      <button className="start-interview-button" type="button" onClick={onBackHome}>
-        Back Home
-      </button>
-    </section>
-  );
-}
-
-
-function FaceStatusCard({
-  faceStatus,
-  faceStatusText,
-  faceAttemptCount,
-  faceMatchCount,
-  faceScore,
-  faceReferenceSource,
-  faceError,
-}) {
-  return (
-    <section className={`face-status ${faceStatus}`}>
-      <p className="face-status-text">{faceStatusText}</p>
-      <div className="face-details">
-        <span>Attempts: {faceAttemptCount}/5</span>
-        <span>Matches: {faceMatchCount}/3</span>
-        <span>Score: {faceScore === null ? "--" : faceScore.toFixed(4)}</span>
-        <span>Reference: {faceReferenceSource ? toTitleCase(faceReferenceSource) : "--"}</span>
-      </div>
-      {faceError && <p className="face-error">{faceError}</p>}
+      <h1>Interview Over</h1>
+      <p>Thank you. Your interview has been submitted successfully.</p>
     </section>
   );
 }
@@ -637,136 +852,120 @@ function CameraPreview({ videoRef, isCameraRunning, size }) {
   return (
     <div className={`video-frame ${size === "small" ? "mini" : "large"}`}>
       <video className="video-preview" ref={videoRef} autoPlay playsInline muted />
-      {!isCameraRunning && <p className="video-placeholder">Camera preview will appear here.</p>}
+      {!isCameraRunning && <p className="video-placeholder">Camera is not active.</p>}
     </div>
   );
 }
 
 
-function EvaluationResult({ evaluation }) {
-  return (
-    <section className={`evaluation-result ${evaluation.success ? "success" : "skipped"}`}>
-      <div className="evaluation-score-grid">
-        <ScoreItem label="Final score" value={evaluation.score} />
-        <ScoreItem label="Relevance" value={evaluation.relevance_score} />
-        <ScoreItem label="Technical" value={evaluation.technical_score} />
-        <ScoreItem label="Depth" value={evaluation.depth_score} />
-        <ScoreItem label="Clarity" value={evaluation.clarity_score} />
-      </div>
-
-      {evaluation.message && <p className="evaluation-message">{evaluation.message}</p>}
-      {evaluation.feedback && <p className="evaluation-feedback">{evaluation.feedback}</p>}
-
-      <EvaluationList title="Strengths" items={evaluation.strengths} />
-      <EvaluationList title="Weaknesses" items={evaluation.weaknesses} />
-
-      {evaluation.follow_up_question && (
-        <p className="follow-up">
-          <strong>Follow-up:</strong> {evaluation.follow_up_question}
-        </p>
-      )}
-    </section>
-  );
-}
-
-
-function ScoreItem({ label, value }) {
-  if (value === undefined || value === null) {
-    return null;
+function getQuestionSourceText(source) {
+  if (source === "question_bank") {
+    return "Question Bank";
   }
 
-  return (
-    <div className="evaluation-score">
-      <span>{label}</span>
-      <strong>{value}/10</strong>
-    </div>
-  );
-}
-
-
-function EvaluationList({ title, items }) {
-  if (!items?.length) {
-    return null;
+  if (source === "qwen") {
+    return "Generated by Qwen";
   }
 
-  return (
-    <div className="evaluation-list">
-      <strong>{title}</strong>
-      <ul>
-        {items.map((item) => (
-          <li key={item}>{item}</li>
-        ))}
-      </ul>
-    </div>
-  );
+  return "Prepared by fallback engine";
 }
 
 
-function SummaryStat({ label, value }) {
-  return (
-    <article className="summary-stat">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </article>
-  );
-}
-
-
-function calculateAverageScore(scores) {
-  const numericScores = scores
-    .map((score) => Number(score))
-    .filter((score) => Number.isFinite(score));
-
-  if (!numericScores.length) {
-    return 0;
+function normalizeInterviewQuestions(value) {
+  if (!Array.isArray(value)) {
+    return [];
   }
 
-  const average = numericScores.reduce((total, score) => total + score, 0) / numericScores.length;
-  return Number(average.toFixed(1));
-}
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
 
+      const question = String(
+        item.question ||
+          item.questionText ||
+          item.text ||
+          ""
+      ).trim();
 
-function getResultLabel(averageScore) {
-  if (averageScore >= 8) {
-    return "Strong candidate";
-  }
+      if (!question) {
+        return null;
+      }
 
-  if (averageScore >= 6) {
-    return "Moderate candidate";
-  }
-
-  return "Needs improvement";
-}
-
-
-function getFinalFeedback(rows) {
-  const feedback = rows
-    .map((row) => row.evaluation?.feedback)
+      return {
+        id: String(item.id || item.question_id || `q${index + 1}`),
+        question,
+        expectedAnswer: String(
+          item.expectedAnswer ||
+            item.expected_answer ||
+            item.answer ||
+            ""
+        ).trim(),
+        difficulty: String(item.difficulty || "Medium").trim() || "Medium",
+        skill: String(item.skill || item.category || item.topic || "").trim(),
+        category: String(item.category || item.skill || item.topic || "Question Bank").trim(),
+      };
+    })
     .filter(Boolean);
-
-  return feedback[feedback.length - 1] || "";
 }
 
 
-function toTitleCase(value) {
-  return String(value || "")
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+function isCandidateAadhaarVerified(candidate) {
+  return (
+    candidate?.aadhaarVerified === true ||
+    candidate?.aadhaar_verified === true ||
+    String(candidate?.verificationStatus || "").toLowerCase() === "aadhaar_passed" ||
+    String(candidate?.verificationStatus || "").toLowerCase() === "verified" ||
+    String(candidate?.verification_status || "").toLowerCase() === "aadhaar_passed" ||
+    String(candidate?.verification_status || "").toLowerCase() === "verified"
+  );
 }
 
 
-function getFaceBackendMessage(data) {
-  if (!data) {
-    return "";
-  }
+function isCandidateFaceVerified(candidate) {
+  return (
+    candidate?.faceVerified === true ||
+    candidate?.face_verified === true ||
+    candidate?.verification_completed === true ||
+    String(candidate?.verificationStatus || "").toLowerCase() === "verified" ||
+    String(candidate?.verification_status || "").toLowerCase() === "verified"
+  );
+}
 
-  const messages = [
-    data.message,
-    data.error,
-    data.data?.error,
-  ].filter(Boolean);
 
-  return [...new Set(messages)].join(" ");
+function isInterviewCompleted(candidate) {
+  return (
+    candidate?.interview_completed === true ||
+    String(candidate?.interview_status || "").toLowerCase() === "completed" ||
+    String(candidate?.interviewStatus || "").toLowerCase() === "completed"
+  );
+}
+
+
+function getReusableCameraStream(stream) {
+  return hasLiveVideoTrack(stream) ? stream : null;
+}
+
+
+function hasLiveVideoTrack(stream) {
+  const videoTracks = stream?.getVideoTracks?.() || [];
+  return Boolean(stream?.active && videoTracks.some((track) => track.readyState === "live"));
+}
+
+
+function getRecorderOptions() {
+  const preferredTypes = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+  ];
+
+  const mimeType = preferredTypes.find((type) => (
+    window.MediaRecorder?.isTypeSupported?.(type)
+      ? window.MediaRecorder.isTypeSupported(type)
+      : false
+  ));
+  return mimeType ? { mimeType } : {};
 }
 
 

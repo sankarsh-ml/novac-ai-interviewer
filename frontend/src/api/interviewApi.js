@@ -4,7 +4,7 @@ const API_BASE_URL = "http://127.0.0.1:8000";
 export async function getInterviewQuestions(applicationId) {
   const cleanApplicationId = getCleanApplicationId(applicationId);
   return fetchInterviewJson(
-    `${API_BASE_URL}/api/interview/questions/${encodeURIComponent(cleanApplicationId)}`,
+    `${API_BASE_URL}/api/interview/${encodeURIComponent(cleanApplicationId)}/questions`,
     {
       method: "GET",
     },
@@ -25,7 +25,40 @@ export async function regenerateInterviewQuestions(applicationId) {
 }
 
 
-export async function evaluateInterviewAnswer(applicationId, questionId, answerText) {
+export async function transcribeInterviewAudio(applicationId, audioBlob, filename = "answer.webm") {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+
+  if (!audioBlob || audioBlob.size === 0) {
+    throw new Error("No recorded audio was found.");
+  }
+
+  const formData = new FormData();
+  formData.append("audio", audioBlob, filename);
+
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interview/${encodeURIComponent(cleanApplicationId)}/transcribe`,
+    {
+      method: "POST",
+      body: formData,
+    },
+    "Could not transcribe audio."
+  );
+}
+
+
+export async function startInterview(applicationId) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interview/${encodeURIComponent(cleanApplicationId)}/start`,
+    {
+      method: "POST",
+    },
+    "Could not start interview."
+  );
+}
+
+
+export async function evaluateInterviewAnswer(applicationId, questionId, answerText, options = {}) {
   const cleanApplicationId = getCleanApplicationId(applicationId);
 
   if (!questionId) {
@@ -33,7 +66,7 @@ export async function evaluateInterviewAnswer(applicationId, questionId, answerT
   }
 
   if (!String(answerText || "").trim()) {
-    throw new Error("Please type an answer before submitting.");
+    throw new Error("Please record an answer before submitting.");
   }
 
   return fetchInterviewJson(
@@ -46,9 +79,53 @@ export async function evaluateInterviewAnswer(applicationId, questionId, answerT
       body: JSON.stringify({
         question_id: questionId,
         answer_text: answerText,
+        transcript: options.transcript || "",
+        audio_path: options.audioPath || "",
       }),
     },
     "Could not evaluate answer."
+  );
+}
+
+
+export async function completeInterview(applicationId) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interview/questions/${encodeURIComponent(cleanApplicationId)}/complete`,
+    {
+      method: "POST",
+    },
+    "Could not complete interview."
+  );
+}
+
+
+export function completeInterviewWithBeacon(applicationId) {
+  const cleanApplicationId = String(applicationId || "").trim();
+
+  if (!cleanApplicationId || !navigator.sendBeacon) {
+    return false;
+  }
+
+  return navigator.sendBeacon(
+    `${API_BASE_URL}/api/interview/questions/${encodeURIComponent(cleanApplicationId)}/complete`
+  );
+}
+
+
+export async function validateInterviewToken(token) {
+  const cleanToken = String(token || "").trim();
+
+  if (!cleanToken) {
+    throw new Error("Interview token missing.");
+  }
+
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interview/validate-token/${encodeURIComponent(cleanToken)}`,
+    {
+      method: "GET",
+    },
+    "Could not validate interview link."
   );
 }
 

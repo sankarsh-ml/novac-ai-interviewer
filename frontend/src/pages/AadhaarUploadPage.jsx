@@ -60,7 +60,6 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
     try {
       const response = await uploadAadhaar(applicationSummary.application_id, file);
       setVerification(response.data);
-      window.setTimeout(() => onVerified(response.data), 900);
     } catch (apiError) {
       setError(apiError.message || "Aadhaar verification failed.");
     } finally {
@@ -101,15 +100,22 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
 
         {verification && (
           <section className="aadhaar-result">
-            <h2>Aadhaar verification status: {verification.aadhaar_verification_status}</h2>
+            <h2>Aadhaar verification status: {formatStatus(verification.aadhaar_verification_status)}</h2>
             <div className="aadhaar-result-grid">
               <ResultItem label="Resume name" value={verification.resume_name} />
               <ResultItem label="Aadhaar name" value={verification.aadhaar_name} />
               <ResultItem label="Name match score" value={verification.name_match_score} />
               <ResultItem label="Photo stored" value={verification.aadhaar_photo_stored ? "Yes" : "No"} />
-              <ResultItem label="Photo match" value={verification.photo_match_status} />
+              <ResultItem label="Photo match" value={formatStatus(verification.photo_match_status)} />
               <ResultItem label="Masked Aadhaar" value={verification.masked_aadhaar_number || "Not available"} />
             </div>
+            <button
+              className="aadhaar-upload-button continue-button"
+              type="button"
+              onClick={() => onVerified({ ...verification, aadhaarVerified: true })}
+            >
+              Continue to Face Verification
+            </button>
           </section>
         )}
       </section>
@@ -129,3 +135,10 @@ function ResultItem({ label, value }) {
 
 
 export default AadhaarUploadPage;
+
+
+function formatStatus(value) {
+  return String(value || "Not Available")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}

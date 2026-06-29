@@ -1,55 +1,124 @@
-# Python virtual environment
-venv/
-id_venv/
-env/
-.venv/
+# =========================
+# NOVAC Git Ignore
+# =========================
 
-# Python cache files
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+id_venv/
+backend/venv/
+backend/.venv/
+forgery_venv/
+mvss_venv/
+ocr_venv/
+face_venv/
+*/venv/
+*/.venv/
+
+# Python cache/build
 __pycache__/
-**/__pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
 .pytest_cache/
-
-# Environment variables
-.env
-.env.local
-
-# FastAPI / backend logs
-*.log
-
-# Uploaded resumes / user files
-backend/app/storage/resumes/*
-backend/app/storage/aadhaar/*
-backend/app/storage/aadhaar_photos/*
-backend/app/storage/resume_photos/*
-backend/app/storage/live_frames/*
-!backend/app/storage/resumes/.gitkeep
-!backend/app/storage/aadhaar/.gitkeep
-!backend/app/storage/aadhaar_photos/.gitkeep
-!backend/app/storage/resume_photos/.gitkeep
-!backend/app/storage/live_frames/.gitkeep
-!backend/app/storage/applications.json
-!backend/app/storage/jobs.json
-
-# Node / React frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
-
-# Build files
-build/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 dist/
+build/
+*.egg-info/
 
-# OS files
-.DS_Store
-Thumbs.db
+# Node / React
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+frontend/dist/
+frontend/build/
+.vite/
 
-# IDE files
+# Environment / secrets
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env
+*.pem
+*.key
+*.crt
+secrets/
+credentials/
+serviceAccount*.json
+
+# IDE / OS
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
+desktop.ini
 
-# Temporary files
-*.tmp
-*.temp
+# Logs
+logs/
+*.log
+
+# Local databases / storage
+*.sqlite
+*.sqlite3
+*.db
+local_storage/
+backend/local_storage/
+backend/app/storage/
+backend/storage/temp/
+backend/storage/tmp/
+backend/uploads/
+backend/temp/
+backend/tmp/
+
+# Generated reports / exports
+reports/
+generated_reports/
+backend/reports/
+backend/generated_reports/
+*.pdf
+*.docx
+*.xlsx
+
+# ML model weights and large binaries
+*.pt
+*.pth
+*.onnx
+*.ckpt
+*.h5
+*.keras
+*.pkl
+*.pickle
+*.joblib
+*.safetensors
+models/
+weights/
+checkpoints/
+backend/models/
+backend/weights/
+backend/checkpoints/
+
+# OCR / CV temporary outputs
+runs/
+outputs/
+results/
+annotated/
+crops/
+cropped/
+ela_outputs/
+mvss_outputs/
+trufor_outputs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Git submodule/local broken folders if not intended to track
+indian-id-validator/.git/

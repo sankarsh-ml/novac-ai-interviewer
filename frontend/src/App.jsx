@@ -9,6 +9,7 @@ import HRDashboardPage from "./pages/HRDashboardPage.jsx";
 import HRHomePage from "./pages/HRHomePage.jsx";
 import InterviewPage from "./pages/InterviewPage.jsx";
 import JobApplicationsPage from "./pages/JobApplicationsPage.jsx";
+import ConfigureInterviewPage from "./pages/ConfigureInterviewPage.jsx";
 import QuestionBankPage from "./pages/QuestionBankPage.jsx";
 import ShortlistedCandidatesPage from "./pages/ShortlistedCandidatesPage.jsx";
 import StudentUploadPage from "./pages/StudentUploadPage.jsx";
@@ -17,6 +18,7 @@ import {
   getCandidateVerificationData,
   getVerificationStatus,
 } from "./api/kycApi.js";
+import { checkInterviewAccess } from "./api/interviewApi.js";
 
 
 function App() {
@@ -24,6 +26,8 @@ function App() {
   const [applicationSummary, setApplicationSummary] = useState(null);
   const [aadhaarSummary, setAadhaarSummary] = useState(null);
   const [selectedJob, setSelectedJob] = useState(null);
+  const [selectedInterviewApplication, setSelectedInterviewApplication] = useState(null);
+  const [questionBankMode, setQuestionBankMode] = useState("manage");
   const [linkValidationError, setLinkValidationError] = useState("");
   const [candidateLoadingMessage, setCandidateLoadingMessage] = useState("Loading candidate verification...");
   const [cameraStream, setCameraStream] = useState(null);
@@ -44,9 +48,18 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const configureMatch = window.location.pathname.match(/^\/configure-interview\/([^/]+)$/);
     const verifyMatch = window.location.pathname.match(/^\/verify\/([^/]+)$/);
     const faceMatch = window.location.pathname.match(/^\/face-verification\/([^/]+)$/);
     const interviewMatch = window.location.pathname.match(/^\/interview\/([^/]+)$/);
+
+    if (configureMatch) {
+      setSelectedInterviewApplication({
+        application_id: decodeURIComponent(configureMatch[1]),
+      });
+      setCurrentPage("configure-interview");
+      return;
+    }
 
     if (!verifyMatch && !faceMatch && !interviewMatch) {
       return;
@@ -57,6 +70,7 @@ function App() {
     setCandidateLoadingMessage(interviewMatch ? "Loading interview..." : "Loading candidate verification...");
     setCurrentPage("candidate-loading");
 
+    const continueCandidateFlow = () => {
     if (verifyMatch) {
       getCandidateVerificationData(applicationId)
         .then((data) => {
@@ -126,6 +140,34 @@ function App() {
       })
       .catch((error) => {
         setLinkValidationError(error.message || "Interview link is invalid.");
+        setCurrentPage("candidate-link-error");
+      });
+    };
+
+    checkInterviewAccess(applicationId)
+      .then((access) => {
+        if (access.status === "allowed" || access.status === "in_progress") {
+          continueCandidateFlow();
+          return;
+        }
+
+        if (access.status === "too_early") {
+          setLinkValidationError(access.message || "Please come back at the scheduled time.");
+          setCurrentPage("candidate-waiting");
+          return;
+        }
+
+        if (access.status === "completed") {
+          setLinkValidationError(access.message || "Interview already completed.");
+          setCurrentPage("candidate-link-error");
+          return;
+        }
+
+        setLinkValidationError(access.message || "Set a proper interview date and time.");
+        setCurrentPage("candidate-link-error");
+      })
+      .catch((error) => {
+        setLinkValidationError(error.message || "Interview schedule could not be verified.");
         setCurrentPage("candidate-link-error");
       });
   }, []);
@@ -282,6 +324,12 @@ function App() {
         }}
         onQuestionBank={(job) => {
           setSelectedJob(job);
+          setQuestionBankMode("manage");
+          setCurrentPage("question-bank");
+        }}
+        onViewQuestionBank={(job) => {
+          setSelectedJob(job);
+          setQuestionBankMode("view");
           setCurrentPage("question-bank");
         }}
       />
@@ -293,7 +341,13 @@ function App() {
   }
 
   if (currentPage === "question-bank") {
-    return <QuestionBankPage job={selectedJob} onBack={() => setCurrentPage("current-jobs")} />;
+    return (
+      <QuestionBankPage
+        job={selectedJob}
+        onBack={() => setCurrentPage("current-jobs")}
+        readOnly={questionBankMode === "view"}
+      />
+    );
   }
 
   if (currentPage === "job-applications") {
@@ -310,7 +364,33 @@ function App() {
   }
 
   if (currentPage === "shortlisted") {
-    return <ShortlistedCandidatesPage job={selectedJob} onBack={() => setCurrentPage("job-applications")} />;
+    return (
+      <ShortlistedCandidatesPage
+        job={selectedJob}
+        onBack={() => setCurrentPage("job-applications")}
+        onConfigureInterview={(application) => {
+          setSelectedInterviewApplication(application);
+          window.history.replaceState(
+            null,
+            "",
+            `/configure-interview/${encodeURIComponent(application.application_id)}`
+          );
+          setCurrentPage("configure-interview");
+        }}
+      />
+    );
+  }
+
+  if (currentPage === "configure-interview") {
+    return (
+      <ConfigureInterviewPage
+        applicationId={selectedInterviewApplication?.application_id}
+        onBack={() => {
+          window.history.replaceState(null, "", "/");
+          setCurrentPage(selectedJob ? "shortlisted" : "current-jobs");
+        }}
+      />
+    );
   }
 
   if (currentPage === "candidate-loading") {
@@ -328,6 +408,17 @@ function App() {
       <main className="home-page">
         <section className="home-content">
           <h1>Candidate link unavailable</h1>
+          <p className="subtitle">{linkValidationError}</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (currentPage === "candidate-waiting") {
+    return (
+      <main className="home-page">
+        <section className="home-content">
+          <h1>Interview scheduled</h1>
           <p className="subtitle">{linkValidationError}</p>
         </section>
       </main>

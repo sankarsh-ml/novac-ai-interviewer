@@ -27,8 +27,10 @@ app.include_router(resume_router, prefix="/api/resume", tags=["Resume"])
 app.include_router(ats_router, prefix="/api/ats", tags=["ATS"])
 app.include_router(kyc_router, prefix="/api/kyc", tags=["KYC"])
 app.include_router(interview_router, prefix="/api/interview", tags=["Interview"])
+app.include_router(interview_router, prefix="/api/interviews", tags=["Interview"])
 app.include_router(job_router, prefix="/api/hr", tags=["HR"])
 app.include_router(question_bank_router, prefix="/api/hr", tags=["Question Bank"])
+app.include_router(question_bank_router, prefix="/api", tags=["Question Bank"])
 
 
 @app.get("/")

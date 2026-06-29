@@ -58,6 +58,42 @@ export async function startInterview(applicationId) {
 }
 
 
+export async function checkInterviewAccess(applicationId) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interviews/${encodeURIComponent(cleanApplicationId)}/access-status`,
+    {
+      method: "GET",
+    },
+    "Could not check interview schedule."
+  );
+}
+
+
+export async function sendInterviewHeartbeat(applicationId) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interviews/${encodeURIComponent(cleanApplicationId)}/heartbeat`,
+    {
+      method: "POST",
+    },
+    "Could not update interview heartbeat."
+  );
+}
+
+
+export async function quitInterview(applicationId) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interviews/${encodeURIComponent(cleanApplicationId)}/quit`,
+    {
+      method: "POST",
+    },
+    "Could not mark interview as interrupted."
+  );
+}
+
+
 export async function evaluateInterviewAnswer(applicationId, questionId, answerText, options = {}) {
   const cleanApplicationId = getCleanApplicationId(applicationId);
 
@@ -100,7 +136,7 @@ export async function completeInterview(applicationId) {
 }
 
 
-export function completeInterviewWithBeacon(applicationId) {
+export function quitInterviewWithBeacon(applicationId) {
   const cleanApplicationId = String(applicationId || "").trim();
 
   if (!cleanApplicationId || !navigator.sendBeacon) {
@@ -108,7 +144,55 @@ export function completeInterviewWithBeacon(applicationId) {
   }
 
   return navigator.sendBeacon(
-    `${API_BASE_URL}/api/interview/questions/${encodeURIComponent(cleanApplicationId)}/complete`
+    `${API_BASE_URL}/api/interviews/${encodeURIComponent(cleanApplicationId)}/quit`
+  );
+}
+
+
+export async function saveInterviewAnswer(applicationId, answer) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interviews/${encodeURIComponent(cleanApplicationId)}/answers/save`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(answer || {}),
+    },
+    "Could not save answer."
+  );
+}
+
+
+export async function captureLivenessReference(applicationId, payload) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interviews/${encodeURIComponent(cleanApplicationId)}/liveness/reference`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload || {}),
+    },
+    "Could not capture face reference."
+  );
+}
+
+
+export async function checkLivenessFrame(applicationId, payload) {
+  const cleanApplicationId = getCleanApplicationId(applicationId);
+  return fetchInterviewJson(
+    `${API_BASE_URL}/api/interviews/${encodeURIComponent(cleanApplicationId)}/liveness/check`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload || {}),
+    },
+    "Could not run liveness check."
   );
 }
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 function CurrentJobsPage({
   onBack,
-  onViewApplications,onUploadResumes,onQuestionBank
+  onViewApplications,onUploadResumes,onQuestionBank,onViewQuestionBank
 }) {
   const [jobs, setJobs] = useState([]);
 
@@ -104,7 +104,7 @@ function CurrentJobsPage({
 
                 <button
                   className="hr-button"
-                  onClick={() => onQuestionBank(job)}
+                  onClick={() => onViewQuestionBank(job)}
                 >
                   View Question Bank
                 </button>

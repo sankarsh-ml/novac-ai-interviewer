@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import "../styles/JobApplicationsPage.css";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+
 function JobApplicationsPage({
   job,
   onBack,onViewShortlisted
@@ -7,8 +10,6 @@ function JobApplicationsPage({
 
   const [applications, setApplications] =
     useState([]);
-  const [selectedApplication, setSelectedApplication] =
-    useState(null);
 
   useEffect(() => {
     fetchApplications();
@@ -20,7 +21,7 @@ function JobApplicationsPage({
 
       const response =
         await fetch(
-          `http://127.0.0.1:8000/api/hr/jobs/${job.id}/applications`
+          `${API_BASE_URL}/api/hr/jobs/${job.id}/applications`
         );
 
       const data =
@@ -46,7 +47,7 @@ function JobApplicationsPage({
 
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/api/hr/applications/${encodeURIComponent(applicationId)}`,
+        `${API_BASE_URL}/api/hr/applications/${encodeURIComponent(applicationId)}`,
         {
           method: "DELETE",
         }
@@ -59,23 +60,10 @@ function JobApplicationsPage({
       }
 
       fetchApplications();
-      setSelectedApplication(null);
     } catch (error) {
       console.error(error);
       alert("Failed to delete candidate");
     }
-  };
-
-  const copyCandidateLink = async (application) => {
-    const link = application.verification_link || application.interview_link;
-
-    if (!link) {
-      alert("No generated link is available for this candidate.");
-      return;
-    }
-
-    await navigator.clipboard.writeText(link);
-    alert("Candidate link copied.");
   };
 
   return (
@@ -156,13 +144,7 @@ function JobApplicationsPage({
 
               <th>ATS Status</th>
 
-              <th>Verification</th>
-
-              <th>Interview</th>
-
-              <th>Link</th>
-
-              <th>Action</th>
+              <th>Delete</th>
 
             </tr>
 
@@ -240,47 +222,14 @@ function JobApplicationsPage({
                   </td>
 
                   <td>
-                    <span className={`status-badge ${getVerificationStatusClass(app)}`}>
-                      {getVerificationLabel(app)}
-                    </span>
-                  </td>
-
-                  <td>
-                    <span className={`status-badge ${getInterviewStatusClass(app)}`}>
-                      {getInterviewLabel(app)}
-                    </span>
-                    {getScoreValue(app.interview_score ?? app.interviewScore) !== null && (
-                      <span className="score-chip">{formatScore(app.interview_score ?? app.interviewScore)}/10</span>
-                    )}
-                  </td>
-
-                  <td>
-                    <button
-                      className="link-button"
-                      type="button"
-                      onClick={() => copyCandidateLink(app)}
-                      disabled={!(app.verification_link || app.interview_link)}
-                    >
-                      Copy Link
-                    </button>
-                  </td>
-
-                  <td>
-                    <button
-                      className="link-button"
-                      type="button"
-                      onClick={() => setSelectedApplication(app)}
-                    >
-                      View
-                    </button>
                     <button
                       className="delete-button"
+                      type="button"
                       onClick={() =>
                         deleteApplication(
                           app.application_id
                         )
                       }
-                      style={{ marginLeft: "8px" }}
                     >
                       Delete
                     </button>
@@ -296,12 +245,6 @@ function JobApplicationsPage({
         </table>
 
       </div>
-      {selectedApplication && (
-        <CandidateDetailsPanel
-          application={selectedApplication}
-          onClose={() => setSelectedApplication(null)}
-        />
-      )}
             <div style={{marginBottom: "20px",marginTop:"20px",textAlign:"centre"}}>
           <button
             className="hr-button"
@@ -541,14 +484,30 @@ function getVerificationStatusClass(application) {
 
 
 function getInterviewLabel(application) {
-  const status = String(application.interview_status || "").toLowerCase();
+  const status = String(application.interview_status || application.interviewStatus || "").toLowerCase();
 
   if (application.interview_completed === true || status === "completed") {
     return "Interview Completed";
   }
 
   if (status === "in_progress") {
-    return "Processing";
+    return "In Progress";
+  }
+
+  if (status === "partial") {
+    return "Partial";
+  }
+
+  if (status === "quit") {
+    return "Quit";
+  }
+
+  if (status === "expired") {
+    return "Expired";
+  }
+
+  if (isScheduleExpired(application)) {
+    return "Expired";
   }
 
   return "Not Started";
@@ -562,9 +521,24 @@ function getInterviewStatusClass(application) {
     return "status-pass";
   }
 
-  if (label === "Processing") {
+  if (label === "In Progress") {
     return "status-processing";
   }
 
+  if (["Partial", "Quit", "Expired"].includes(label)) {
+    return "status-fail";
+  }
+
   return "status-muted";
+}
+
+
+function isScheduleExpired(application) {
+  const scheduledAt = new Date(application?.interview_scheduled_at || "");
+
+  if (!Number.isFinite(scheduledAt.getTime())) {
+    return false;
+  }
+
+  return Date.now() > scheduledAt.getTime() + 60 * 60 * 1000;
 }

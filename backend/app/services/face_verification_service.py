@@ -88,6 +88,63 @@ def get_largest_face_embedding(image_path: str):
     }
 
 
+def analyze_face_image_bytes(image_bytes: bytes):
+    if not image_bytes:
+        return {
+            "success": False,
+            "face_count": 0,
+            "embedding": None,
+            "message": "Uploaded live frame is empty",
+        }
+
+    try:
+        app = get_face_app()
+        array = np.frombuffer(image_bytes, dtype=np.uint8)
+        image = cv2.imdecode(array, cv2.IMREAD_COLOR)
+
+        if image is None:
+            return {
+                "success": False,
+                "face_count": 0,
+                "embedding": None,
+                "message": "Image could not be decoded",
+            }
+
+        faces = app.get(image)
+        face_count = len(faces or [])
+
+        if face_count == 0:
+            return {
+                "success": False,
+                "face_count": 0,
+                "embedding": None,
+                "message": "No face detected in live frame",
+            }
+
+        if face_count > 1:
+            return {
+                "success": False,
+                "face_count": face_count,
+                "embedding": None,
+                "message": "Multiple faces detected in live frame",
+            }
+
+        return {
+            "success": True,
+            "face_count": 1,
+            "embedding": faces[0].embedding,
+            "message": "Face detected",
+        }
+
+    except Exception as error:
+        return {
+            "success": False,
+            "face_count": 0,
+            "embedding": None,
+            "message": _exception_message(error),
+        }
+
+
 def cosine_similarity(a, b):
     vector_a = np.asarray(a, dtype="float32")
     vector_b = np.asarray(b, dtype="float32")

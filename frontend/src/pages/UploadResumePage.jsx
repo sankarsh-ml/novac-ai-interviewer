@@ -1,7 +1,13 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "../styles/UploadResumePage.css";
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+const PROCESSING_LEAVE_MESSAGE = "Processing is still running. Are you sure you want to leave this page?";
+
 function UploadResumesPage({job,onBack}) 
 {
+  const isMountedRef = useRef(true);
+  const isUploadingRef = useRef(false);
 
   const [files,setFiles] =
     useState([]);
@@ -9,6 +15,69 @@ function UploadResumesPage({job,onBack})
     useState(false);
   const [uploadResult, setUploadResult] =
     useState(null);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+      isUploadingRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    isUploadingRef.current = isUploading;
+  }, [isUploading]);
+
+  useEffect(() => {
+    if (!isUploading) {
+      return;
+    }
+
+    const handleBeforeUnload = (event) => {
+      event.preventDefault();
+      event.returnValue = PROCESSING_LEAVE_MESSAGE;
+      return PROCESSING_LEAVE_MESSAGE;
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [isUploading]);
+
+  useEffect(() => {
+    window.history.pushState({ uploadResumesPage: true }, "", window.location.href);
+
+    const handlePopState = () => {
+      if (!isUploadingRef.current) {
+        onBack();
+        return;
+      }
+
+      if (window.confirm(PROCESSING_LEAVE_MESSAGE)) {
+        isUploadingRef.current = false;
+        onBack();
+        return;
+      }
+
+      window.history.pushState({ uploadResumesPage: true }, "", window.location.href);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [onBack]);
+
+  const handleBack = () => {
+    if (isUploadingRef.current && !window.confirm(PROCESSING_LEAVE_MESSAGE)) {
+      return;
+    }
+
+    isUploadingRef.current = false;
+    onBack();
+  };
 
   const uploadResumes = async () => {
 
@@ -32,7 +101,7 @@ function UploadResumesPage({job,onBack})
         setUploadResult(null);
 
         const response = await fetch(
-        "http://127.0.0.1:8000/api/resume/bulk-upload",
+        `${API_BASE_URL}/api/resume/bulk-upload`,
         {
             method: "POST",
             body: formData
@@ -41,10 +110,17 @@ function UploadResumesPage({job,onBack})
 
         const data = await response.json();
 
+        if (!isMountedRef.current) {
+          return;
+        }
+
         setUploadResult(data);
         setFiles([]);
     } catch (error) {
         console.error(error);
+        if (!isMountedRef.current) {
+          return;
+        }
         setUploadResult({
           count: 0,
           failed: [
@@ -55,7 +131,10 @@ function UploadResumesPage({job,onBack})
           ]
         });
     } finally {
-    setIsUploading(false);
+      if (isMountedRef.current) {
+        setIsUploading(false);
+      }
+      isUploadingRef.current = false;
     }
   };
 
@@ -66,7 +145,7 @@ function UploadResumesPage({job,onBack})
 
       <button
         className="upload-back-button"
-        onClick={onBack}
+        onClick={handleBack}
       >
         Back
       </button>

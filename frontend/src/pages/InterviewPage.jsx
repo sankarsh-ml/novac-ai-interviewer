@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  captureLivenessReference,
+  checkLivenessFrame,
   completeInterview,
-  completeInterviewWithBeacon,
   evaluateInterviewAnswer,
+  quitInterview,
+  quitInterviewWithBeacon,
+  saveInterviewAnswer,
+  sendInterviewHeartbeat,
   startInterview,
   transcribeInterviewAudio,
 } from "../api/interviewApi.js";
@@ -17,7 +22,14 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const autoStartInFlightRef = useRef(false);
+  const livenessTimeoutRef = useRef(null);
+  const heartbeatIntervalRef = useRef(null);
+  const isLivenessCheckingRef = useRef(false);
+  const livenessReferenceReadyRef = useRef(false);
+  const interviewActiveRef = useRef(false);
+  const interviewCompletedRef = useRef(false);
   const [cameraError, setCameraError] = useState("");
+  const [cameraStatus, setCameraStatus] = useState(cameraSession?.isCameraRunning ? "active" : "idle");
   const [isCameraRunning, setIsCameraRunning] = useState(Boolean(cameraSession?.isCameraRunning));
   const [isFaceVerified, setIsFaceVerified] = useState(false);
   const [isInterviewStarted, setIsInterviewStarted] = useState(false);
@@ -44,12 +56,30 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
   const [answerError, setAnswerError] = useState("");
   const [voiceError, setVoiceError] = useState("");
   const [completionError, setCompletionError] = useState("");
+  const [livenessWarning, setLivenessWarning] = useState("");
+  const [livenessState, setLivenessState] = useState("idle");
+  const [isLivenessReferenceReady, setIsLivenessReferenceReady] = useState(false);
+  const [livenessSummary, setLivenessSummary] = useState(getInitialLivenessSummary(applicationSummary));
 
   useEffect(() => {
     return () => {
+      stopLivenessChecks();
+      stopHeartbeat();
       stopCamera();
     };
   }, []);
+
+  useEffect(() => {
+    interviewActiveRef.current = isInterviewStarted;
+  }, [isInterviewStarted]);
+
+  useEffect(() => {
+    interviewCompletedRef.current = interviewCompleted;
+  }, [interviewCompleted]);
+
+  useEffect(() => {
+    livenessReferenceReadyRef.current = isLivenessReferenceReady;
+  }, [isLivenessReferenceReady]);
 
   useEffect(() => {
     if (isInterviewCompleted(applicationSummary)) {
@@ -64,6 +94,7 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
     }
 
     setIsFaceVerified(true);
+    setLivenessSummary(getInitialLivenessSummary(applicationSummary));
   }, [applicationSummary]);
 
   useEffect(() => {
@@ -75,7 +106,10 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
 
     attachCameraStream(stream, "shared-camera").catch((error) => {
       console.error("[Interview] Could not attach camera preview:", error);
-      setCameraError("Camera access is required for the interview. Please allow camera permission and refresh.");
+      if (!hasActiveCamera()) {
+        setCameraStatus("error");
+        setCameraError("Camera access is required for the interview. Please allow camera permission and refresh.");
+      }
     });
   }, [cameraSession?.stream, isInterviewStarted, interviewCompleted]);
 
@@ -85,7 +119,7 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
     }
 
     const handleBeforeUnload = () => {
-      completeInterviewWithBeacon(applicationSummary.application_id);
+      quitInterviewWithBeacon(applicationSummary.application_id);
     };
 
     window.addEventListener("beforeunload", handleBeforeUnload);
@@ -96,12 +130,56 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
   }, [applicationSummary?.application_id, interviewCompleted, isInterviewStarted]);
 
   useEffect(() => {
+    if (!isInterviewStarted || interviewCompleted || !applicationSummary?.application_id) {
+      stopHeartbeat();
+      return;
+    }
+
+    sendInterviewHeartbeat(applicationSummary.application_id).catch(() => {});
+    heartbeatIntervalRef.current = window.setInterval(() => {
+      sendInterviewHeartbeat(applicationSummary.application_id).catch(() => {});
+    }, 20000);
+
+    return () => {
+      stopHeartbeat();
+    };
+  }, [applicationSummary?.application_id, interviewCompleted, isInterviewStarted]);
+
+  useEffect(() => {
     if (!applicationSummary?.application_id || interviewCompleted) {
       return;
     }
 
     ensureCameraOn().catch(() => {});
   }, [applicationSummary?.application_id, interviewCompleted]);
+
+  useEffect(() => {
+    if (
+      !isInterviewStarted ||
+      interviewCompleted ||
+      hasSubmittedCurrentAnswer ||
+      !isLivenessReferenceReady ||
+      !isCameraRunning ||
+      !applicationSummary?.application_id
+    ) {
+      stopLivenessChecks();
+      return;
+    }
+
+    scheduleNextLivenessCheck();
+
+    return () => {
+      stopLivenessChecks();
+    };
+  }, [
+    applicationSummary?.application_id,
+    currentQuestionIndex,
+    hasSubmittedCurrentAnswer,
+    interviewCompleted,
+    isCameraRunning,
+    isInterviewStarted,
+    isLivenessReferenceReady,
+  ]);
 
   async function attachCameraStream(stream, context) {
     const videoTracks = stream?.getVideoTracks?.() || [];
@@ -124,6 +202,7 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
       throw new Error("Camera stream has no live video track.");
     }
 
+    setCameraStatus("requesting");
     streamRef.current = stream;
 
     if (videoRef.current) {
@@ -135,6 +214,8 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
     }
 
     setIsCameraRunning(true);
+    setCameraStatus("active");
+    setCameraError("");
     return stream;
   }
 
@@ -155,6 +236,13 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
   }
 
   const ensureCameraOn = async () => {
+    if (hasActiveCamera()) {
+      setCameraStatus("active");
+      setCameraError("");
+      return streamRef.current || cameraSession?.stream || videoRef.current?.srcObject;
+    }
+
+    setCameraStatus("requesting");
     setCameraError("");
 
     try {
@@ -174,6 +262,14 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
 
     } catch (error) {
       console.error("[Interview] Camera unavailable:", error);
+      if (hasActiveCamera()) {
+        setCameraStatus("active");
+        setCameraError("");
+        return streamRef.current || cameraSession?.stream || videoRef.current?.srcObject;
+      }
+
+      const denied = error?.name === "NotAllowedError" || error?.name === "PermissionDeniedError";
+      setCameraStatus(denied ? "denied" : "error");
       setCameraError("Camera access is required for the interview. Please allow camera permission and refresh.");
       throw new Error("Camera access is required for the interview. Please allow camera permission and refresh.");
     }
@@ -182,6 +278,8 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
   const startCamera = ensureCameraOn;
 
   const stopCamera = () => {
+    stopLivenessChecks();
+    stopHeartbeat();
     stopActiveRecording();
     stopAudioStream();
     cameraSession?.stopCamera?.();
@@ -192,6 +290,218 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
     }
 
     setIsCameraRunning(false);
+    setCameraStatus("idle");
+  };
+
+  const hasActiveCamera = () => (
+    hasLiveVideoTrack(streamRef.current) ||
+    hasLiveVideoTrack(cameraSession?.stream) ||
+    hasLiveVideoTrack(videoRef.current?.srcObject)
+  );
+
+  const shouldShowCameraError = () => (
+    Boolean(cameraError) &&
+    ["denied", "error"].includes(cameraStatus) &&
+    !hasActiveCamera()
+  );
+
+  const stopLivenessChecks = () => {
+    if (livenessTimeoutRef.current) {
+      window.clearTimeout(livenessTimeoutRef.current);
+      livenessTimeoutRef.current = null;
+    }
+  };
+
+  const stopHeartbeat = () => {
+    if (heartbeatIntervalRef.current) {
+      window.clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+  };
+
+  const scheduleNextLivenessCheck = () => {
+    stopLivenessChecks();
+
+    if (!canRunLivenessCheck()) {
+      return;
+    }
+
+    const delayMs = 10000 + Math.floor(Math.random() * 5001);
+    livenessTimeoutRef.current = window.setTimeout(async () => {
+      await runLivenessCheck("periodic", currentQuestionIndex + 1);
+
+      if (
+        canRunLivenessCheck() &&
+        !hasSubmittedCurrentAnswer &&
+        currentQuestionIndex < questions.length
+      ) {
+        scheduleNextLivenessCheck();
+      }
+    }, delayMs);
+  };
+
+  const canRunLivenessCheck = () => (
+    Boolean(applicationSummary?.application_id) &&
+    interviewActiveRef.current &&
+    !interviewCompletedRef.current &&
+    livenessReferenceReadyRef.current &&
+    hasActiveCamera()
+  );
+
+  const captureBackendLivenessReference = async () => {
+    setLivenessState("checking");
+    setLivenessWarning("Checking face...");
+    const images = await captureLivenessFrames();
+    const response = await captureLivenessReference(applicationSummary?.application_id, {
+      image: images[0] || "",
+      images,
+      check_type: "reference",
+    });
+
+    if (!response.ok) {
+      setIsLivenessReferenceReady(false);
+      livenessReferenceReadyRef.current = false;
+      setLivenessState(response.event_type || response.status || "warning");
+      setLivenessWarning(getLivenessMessage(response));
+      if (response.liveness) {
+        setLivenessSummary(response.liveness);
+      }
+      throw new Error(response.message || "Could not verify your face. Please keep one face visible on camera.");
+    }
+
+    setLivenessState("verified");
+    setLivenessWarning("Face Verified");
+    setIsLivenessReferenceReady(true);
+    livenessReferenceReadyRef.current = true;
+
+    if (response.liveness) {
+      setLivenessSummary(response.liveness);
+    }
+  };
+
+  const runLivenessCheck = async (checkType, questionIndex = currentQuestionIndex + 1) => {
+    if (!applicationSummary?.application_id || !canRunLivenessCheck() || isLivenessCheckingRef.current) {
+      return;
+    }
+
+    isLivenessCheckingRef.current = true;
+
+    try {
+      setLivenessState("checking");
+      setLivenessWarning("Checking face...");
+      const images = await captureLivenessFrames();
+      const response = await checkLivenessFrame(applicationSummary.application_id, {
+        image: images[0] || "",
+        images,
+        question_index: questionIndex,
+        question_id: questions[currentQuestionIndex]?.id || "",
+        check_type: checkType,
+      });
+
+      if (response.liveness) {
+        setLivenessSummary(response.liveness);
+      }
+
+      setLivenessState(response.event_type || response.status || (response.ok ? "verified" : "warning"));
+      setLivenessWarning(getLivenessMessage(response));
+      return response;
+    } catch (error) {
+      console.error("[Interview] Liveness check failed:", error);
+      setLivenessState("warning");
+      setLivenessWarning(error.message || "Warning: Face check could not be completed.");
+      return null;
+    } finally {
+      isLivenessCheckingRef.current = false;
+    }
+  };
+
+  const captureLivenessFrames = async () => {
+    await waitForVideoReady(videoRef.current);
+    const frames = [];
+
+    for (let index = 0; index < 3; index += 1) {
+      frames.push(captureVideoFrame(videoRef.current));
+
+      if (index < 2) {
+        await delay(550);
+      }
+    }
+
+    return frames;
+  };
+
+  const captureVideoFrame = (video) => {
+    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+      throw new Error("Camera is not ready for face check.");
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      throw new Error("Could not capture camera frame.");
+    }
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.82);
+  };
+
+  const waitForVideoReady = async (video) => {
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < 4000) {
+      if (video?.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+        return;
+      }
+
+      await delay(100);
+    }
+
+    throw new Error("Camera is not ready for face check.");
+  };
+
+  const delay = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
+  const getLivenessMessage = (response) => {
+    if (response?.event_type === "face_match" || response?.status === "passed" || response?.status === "reference_set") {
+      return "Face Verified";
+    }
+
+    if (response?.event_type === "multiple_faces_detected" || response?.status === "multiple_faces_detected") {
+      return "Warning: Multiple faces detected";
+    }
+
+    if (response?.event_type === "identity_mismatch") {
+      return "Suspicious: Different person detected";
+    }
+
+    if (response?.event_type === "no_face_detected" || response?.status === "no_face_detected") {
+      return "Warning: Face not detected";
+    }
+
+    return response?.message || "Checking face...";
+  };
+
+  const getLivenessTone = () => {
+    if (livenessState === "checking") {
+      return "checking";
+    }
+
+    if (livenessState === "identity_mismatch" || livenessState === "suspicious") {
+      return "suspicious";
+    }
+
+    if (
+      livenessState === "no_face_detected" ||
+      livenessState === "multiple_faces_detected" ||
+      livenessState === "warning"
+    ) {
+      return "warning";
+    }
+
+    return "passed";
   };
 
   const resetInterviewState = () => {
@@ -225,13 +535,6 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
     setQwenWarning("");
 
     try {
-      const stream = getReusableCameraStream(cameraSession?.stream) || getReusableCameraStream(streamRef.current);
-      if (stream) {
-        await attachCameraStream(stream, "start-interview");
-      } else {
-        await ensureCameraOn();
-      }
-
       console.log("[Interview] candidateId from route/state:", applicationSummary?.application_id);
       console.log("[Interview] verification check:", {
         aadhaarVerified: isCandidateAadhaarVerified(applicationSummary),
@@ -250,6 +553,14 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
         setIsInterviewStarted(true);
         return;
       }
+
+      const stream = getReusableCameraStream(cameraSession?.stream) || getReusableCameraStream(streamRef.current);
+      if (stream) {
+        await attachCameraStream(stream, "start-interview");
+      } else {
+        await ensureCameraOn();
+      }
+      await captureBackendLivenessReference();
 
       const loadedQuestions = normalizeInterviewQuestions(response.questions);
       console.log("[Interview] final questions array length:", loadedQuestions.length);
@@ -320,6 +631,18 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
     setCompletionError("");
 
     try {
+      await saveInterviewAnswer(applicationSummary?.application_id, {
+        question_index: currentQuestionIndex + 1,
+        question_id: question.id,
+        question: question.question,
+        expected_answer: question.expectedAnswer || "",
+        candidate_answer: currentTranscript,
+        score: null,
+        feedback: null,
+        status: "submitted",
+        submitted_at: new Date().toISOString(),
+      });
+      await runLivenessCheck("before-submit");
       const response = await evaluateInterviewAnswer(
         applicationSummary?.application_id,
         question.id,
@@ -401,6 +724,7 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
     setIsPreparingRecording(true);
 
     try {
+      await runLivenessCheck("start_recording", currentQuestionIndex + 1);
       const recordingQuestionIndex = currentQuestionIndex;
       const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = audioStream;
@@ -556,9 +880,9 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
   const handleBackHome = async () => {
     if (isInterviewStarted && !interviewCompleted) {
       try {
-        await completeInterview(applicationSummary?.application_id);
+        await quitInterview(applicationSummary?.application_id);
       } catch (error) {
-        console.error("Could not finalize partial interview:", error);
+        console.error("Could not mark partial interview:", error);
       }
     }
 
@@ -598,7 +922,8 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
             videoRef={videoRef}
             isCameraRunning={isCameraRunning}
             isFaceVerified={isFaceVerified}
-            cameraError={cameraError}
+            cameraError={shouldShowCameraError() ? cameraError : ""}
+            cameraStatus={cameraStatus}
             isGeneratingQuestions={isGeneratingQuestions}
             questionGenerationError={questionGenerationError}
             onStartCamera={startCamera}
@@ -631,9 +956,12 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
             onNextQuestion={handleNextQuestion}
             onFinishInterview={handleFinishInterview}
             completionError={completionError}
-            cameraError={cameraError}
-            onEnableCamera={ensureCameraOn}
-          />
+          cameraError={shouldShowCameraError() ? cameraError : ""}
+          onEnableCamera={ensureCameraOn}
+          livenessWarning={livenessWarning}
+          livenessTone={getLivenessTone()}
+          livenessSummary={livenessSummary}
+        />
         )}
 
         {isInterviewStarted && interviewCompleted && (
@@ -650,6 +978,7 @@ function PreInterviewView({
   isCameraRunning,
   isFaceVerified,
   cameraError,
+  cameraStatus,
   isGeneratingQuestions,
   questionGenerationError,
   onStartCamera,
@@ -694,8 +1023,11 @@ function PreInterviewView({
             onClick={onStartInterview}
             disabled={!isCameraRunning || isGeneratingQuestions}
           >
-            {isGeneratingQuestions ? "Preparing Interview..." : "Start Interview"}
+          {isGeneratingQuestions ? "Starting interview..." : "Start Interview"}
           </button>
+          {isGeneratingQuestions && !cameraError && (
+            <p className="submission-success">{cameraStatus === "active" ? "Verifying face..." : "Starting interview..."}</p>
+          )}
           {questionGenerationError && <p className="error-message">{questionGenerationError}</p>}
         </section>
       )}
@@ -729,6 +1061,9 @@ function ActiveInterviewView({
   completionError,
   cameraError,
   onEnableCamera,
+  livenessWarning,
+  livenessTone,
+  livenessSummary,
 }) {
   return (
     <section className="active-interview">
@@ -828,11 +1163,22 @@ function ActiveInterviewView({
             </button>
           )}
           {cameraError && <p className="answer-error">{cameraError}</p>}
-          <div className="face-mini-status">
-            <strong>Face Verified</strong>
-          </div>
+          <LivenessPanel warning={livenessWarning} tone={livenessTone} summary={livenessSummary} />
         </aside>
       </div>
+    </section>
+  );
+}
+
+
+function LivenessPanel({ warning, tone, summary }) {
+  const status = String(tone || summary?.status || "passed");
+  return (
+    <section className={`liveness-panel ${status}`}>
+      <strong>Liveness / Identity</strong>
+      <span>{formatLivenessStatus(status)}</span>
+      <p>{warning || "Same-person checks are running while your camera stays on."}</p>
+      <small>Warnings: {Number(summary?.total_warnings || 0)}</small>
     </section>
   );
 }
@@ -966,6 +1312,35 @@ function getRecorderOptions() {
       : false
   ));
   return mimeType ? { mimeType } : {};
+}
+
+
+function getInitialLivenessSummary(candidate) {
+  return candidate?.liveness || {
+    status: "passed",
+    total_warnings: 0,
+    no_face_count: 0,
+    multiple_face_count: 0,
+    identity_mismatch_count: 0,
+    events: [],
+  };
+}
+
+
+function formatLivenessStatus(status) {
+  if (status === "checking") {
+    return "Checking face...";
+  }
+
+  if (status === "suspicious") {
+    return "Suspicious";
+  }
+
+  if (status === "warning") {
+    return "Warning";
+  }
+
+  return "Passed";
 }
 
 

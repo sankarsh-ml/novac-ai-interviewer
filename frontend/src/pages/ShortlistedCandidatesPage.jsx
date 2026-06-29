@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
 import "../styles/ShortlistedCandidatesPage.css";
 
-function ShortlistedCandidatesPage({job,onBack}) {
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+
+function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
 
   const [applications, setApplications] =
     useState([]);
 
-  const [expiryDates, setExpiryDates] =
-    useState({});
-
-  const [generatedLinks, setGeneratedLinks] =
-    useState({});
+  const [selectedApplication, setSelectedApplication] =
+    useState(null);
+  const [reportError, setReportError] = useState("");
+  const [viewReportLoadingId, setViewReportLoadingId] = useState("");
+  const [reportLoadingId, setReportLoadingId] = useState("");
+  const [bulkReportLoading, setBulkReportLoading] = useState(false);
+  const [copiedLinkId, setCopiedLinkId] = useState("");
 
   useEffect(() => {
     fetchApplications();
@@ -22,7 +26,7 @@ function ShortlistedCandidatesPage({job,onBack}) {
 
       const response =
         await fetch(
-          `http://127.0.0.1:8000/api/hr/jobs/${job.id}/applications`
+          `${API_BASE_URL}/api/hr/jobs/${job.id}/applications`
         );
 
       const data =
@@ -40,44 +44,6 @@ function ShortlistedCandidatesPage({job,onBack}) {
             passedCandidates
           );
 
-          const links = {};
-
-          const dates = {};
-
-          passedCandidates.forEach(
-            (app) => {
-
-              if (
-                (app.verification_link || app.interview_link)
-                &&
-                !isInterviewComplete(app)
-              ) {
-
-                links[
-                  app.application_id
-                ] =
-                  app.verification_link || app.interview_link;
-              }
-
-              if (
-                app.expiry_date
-              ) {
-
-                dates[
-                  app.application_id
-                ] =
-                  app.expiry_date;
-              }
-            }
-          );
-
-          setGeneratedLinks(
-            links
-          );
-
-          setExpiryDates(
-            dates
-          );
       }
 
     } catch (error) {
@@ -86,92 +52,118 @@ function ShortlistedCandidatesPage({job,onBack}) {
     }
   };
 
-  const generateInterviewLink = async (application) => {
+  const completedApplications = applications.filter(isReportReady);
 
-    const expiry =
-        expiryDates[
-        application.application_id
-        ];
+  const copyInterviewLink = async (application) => {
+    const link = getInterviewLink(application);
 
-    if (!expiry) {
-
-        alert(
-        "Please select an expiry date first."
-        );
-
-        return;
+    if (!link) {
+      setReportError("No generated interview link is available for this candidate.");
+      return;
     }
 
-    if (isInterviewComplete(application)) {
-      alert("Interview is already completed for this candidate.");
+    setReportError("");
+
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopiedLinkId(application.application_id);
+      window.setTimeout(() => setCopiedLinkId(""), 1800);
+    } catch (error) {
+      console.error(error);
+      setReportError("Could not copy interview link. Please copy it from the candidate record.");
+    }
+  };
+
+  const viewCandidateReport = async (application) => {
+    const applicationId = application?.application_id;
+
+    if (!applicationId) {
+      setReportError("Candidate ID is missing.");
+      return;
+    }
+
+    setReportError("");
+    setViewReportLoadingId(applicationId);
+    const reportWindow = window.open("", "_blank");
+
+    if (!reportWindow) {
+      setViewReportLoadingId("");
+      setReportError("Could not open report. Please allow pop-ups for this site.");
       return;
     }
 
     try {
-
-        const response =
-        await fetch(
-            "http://127.0.0.1:8000/api/interview/create-link",
-            {
-            method: "POST",
-
-            headers: {
-                "Content-Type":
-                "application/json"
-            },
-
-            body: JSON.stringify({
-                application_id:
-                application.application_id,
-
-                candidate_name:
-                application.candidate_name,
-
-                email:
-                application.email,
-
-                expiry_date:
-                expiry
-            })
-            }
-        );
-
-        const data =
-        await response.json();
-
-        if (data.success) {
-        const verificationLink =
-            data.verificationUrl ||
-            data.verification_url ||
-            data.link;
-
-        setGeneratedLinks({
-            ...generatedLinks,
-            [application.application_id]:
-            verificationLink
-        });
-
-        navigator.clipboard.writeText(
-            verificationLink
-        );
-
-        alert(
-            "Verification Link Generated & Copied"
-        );
+      const { blob } = await fetchReportBlob(
+        `${API_BASE_URL}/api/hr/applications/${encodeURIComponent(applicationId)}/report`,
+        {
+          method: "GET",
         }
-
+      );
+      openBlob(blob, reportWindow);
     } catch (error) {
+      console.error(error);
+      reportWindow.close();
+      setReportError(error.message || "Report generation failed.");
+    } finally {
+      setViewReportLoadingId("");
+    }
+  };
 
-            console.error(
-                "FULL ERROR:",
-                error
-            );
+  const downloadCandidateReport = async (application) => {
+    const applicationId = application?.application_id;
 
-            alert(
-                "Failed To Generate Link"
-            );
-            }
-    };
+    if (!applicationId) {
+      setReportError("Candidate ID is missing.");
+      return;
+    }
+
+    setReportError("");
+    setReportLoadingId(applicationId);
+
+    try {
+      const { blob, filename } = await fetchReportBlob(
+        `${API_BASE_URL}/api/hr/applications/${encodeURIComponent(applicationId)}/report`,
+        {
+          method: "GET",
+        }
+      );
+      downloadBlob(blob, filename || `candidate_report_${safeFilename(application.candidate_name || "candidate")}.pdf`);
+    } catch (error) {
+      console.error(error);
+      setReportError(error.message || "Report generation failed.");
+    } finally {
+      setReportLoadingId("");
+    }
+  };
+
+  const downloadCompletedReports = async () => {
+    if (!completedApplications.length) {
+      setReportError("No completed, partial, or quit candidate evaluations are available for report generation.");
+      return;
+    }
+
+    setReportError("");
+    setBulkReportLoading(true);
+
+    try {
+      const { blob, filename } = await fetchReportBlob(`${API_BASE_URL}/api/hr/reports`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          application_ids: completedApplications.map((application) => application.application_id).filter(Boolean),
+          job_id: job.id,
+        }),
+      });
+      downloadBlob(blob, filename || "novac_group_candidate_report.pdf");
+    } catch (error) {
+      console.error(error);
+      setReportError(error.message || "Report generation failed.");
+    } finally {
+      setBulkReportLoading(false);
+    }
+  };
 
   return (
 
@@ -210,6 +202,25 @@ function ShortlistedCandidatesPage({job,onBack}) {
 
         </div>
 
+        <div className="report-toolbar">
+          <div>
+            <span>Available Reports</span>
+            <strong>{completedApplications.length}</strong>
+          </div>
+          <div className="report-toolbar-actions">
+            <button
+              className="report-button"
+              type="button"
+              onClick={downloadCompletedReports}
+              disabled={!completedApplications.length || bulkReportLoading}
+            >
+              {bulkReportLoading ? "Generating report..." : "Download All Reports"}
+            </button>
+          </div>
+        </div>
+
+        {reportError && <p className="report-error">{reportError}</p>}
+
         <div className="table-wrapper">
 
           <table
@@ -233,23 +244,11 @@ function ShortlistedCandidatesPage({job,onBack}) {
                 </th>
 
                 <th>
-                  Verification
+                  Interview Link
                 </th>
 
                 <th>
-                  Interview
-                </th>
-
-                <th>
-                  Expiry Date
-                </th>
-
-                <th>
-                  Generate
-                </th>
-
-                <th>
-                  Verification Link
+                  Report
                 </th>
 
               </tr>
@@ -287,82 +286,48 @@ function ShortlistedCandidatesPage({job,onBack}) {
                     </td>
 
                     <td>
-                      <span className={`status-badge ${getVerificationStatusClass(app)}`}>
-                        {getVerificationLabel(app)}
-                      </span>
-                    </td>
 
-                    <td>
-                      <span className={`status-badge ${getInterviewStatusClass(app)}`}>
-                        {getInterviewLabel(app)}
-                      </span>
-                    </td>
-
-                    <td>
-
-                      <input
-                        type="date"
-                        className="expiry-input"
-                        value={
-                          expiryDates[
-                            app.application_id
-                          ] || ""
-                        }
-                        onChange={(e) =>
-                          setExpiryDates({
-                            ...expiryDates,
-                            [app.application_id]:
-                              e.target.value
-                          })
-                        }
-                      />
+                      {isLinkGenerated(app) && !isInterviewLocked(app) ? (
+                        <button
+                          className="send-button copy"
+                          type="button"
+                          onClick={() => copyInterviewLink(app)}
+                        >
+                          {copiedLinkId === app.application_id ? "Copied" : "Copy Link"}
+                        </button>
+                      ) : isInterviewLocked(app) ? (
+                        <span className="muted-cell">Unavailable</span>
+                      ) : (
+                        <button
+                          className="send-button"
+                          type="button"
+                          onClick={() => onConfigureInterview?.(app)}
+                        >
+                          Generate Link
+                        </button>
+                      )}
 
                     </td>
 
                     <td>
-
-                      <button
-                        className="send-button"
-                        disabled={isInterviewComplete(app)}
-                        onClick={() =>
-                          generateInterviewLink(
-                            app
-                          )
-                        }
-                      >
-                        Generate Link
-                      </button>
-
-                    </td>
-
-                    <td>
-
-                      {
-                        generatedLinks[
-                          app.application_id
-                        ] && !isInterviewComplete(app) ? (
-
-                          <div
-                            className="generated-link"
-                          >
-                            {
-                              generatedLinks[
-                                app.application_id
-                              ]
-                            }
-                          </div>
-
-                        ) : (
-
-                          <span
-                            className="no-link"
-                          >
-                            Not Generated
-                          </span>
-
-                        )
-                      }
-
+                      <div className="action-group">
+                        <button
+                          className="link-button"
+                          type="button"
+                          onClick={() => viewCandidateReport(app)}
+                          disabled={!isReportReady(app) || viewReportLoadingId === app.application_id}
+                        >
+                          {viewReportLoadingId === app.application_id ? "Opening report..." : "View Report"}
+                        </button>
+                        <button
+                          className="report-button compact"
+                          type="button"
+                          onClick={() => downloadCandidateReport(app)}
+                          disabled={!isReportReady(app) || reportLoadingId === app.application_id}
+                        >
+                          {reportLoadingId === app.application_id ? "Generating report..." : "Download Report"}
+                        </button>
+                      </div>
                     </td>
 
                   </tr>
@@ -376,6 +341,13 @@ function ShortlistedCandidatesPage({job,onBack}) {
 
         </div>
 
+        {selectedApplication && (
+          <CandidateDetailsPanel
+            application={selectedApplication}
+            onClose={() => setSelectedApplication(null)}
+          />
+        )}
+
       </div>
 
     </main>
@@ -386,6 +358,183 @@ function ShortlistedCandidatesPage({job,onBack}) {
 export default ShortlistedCandidatesPage;
 
 
+function CandidateDetailsPanel({ application, onClose }) {
+  const answers = Object.values(application.interview_answers || {}).filter(
+    (answer) => answer && typeof answer === "object"
+  );
+  const questionSource = application.question_source || application.interview_questions?.source || "";
+
+  return (
+    <section className="candidate-details-panel">
+      <div className="candidate-details-header">
+        <div>
+          <p className="details-eyebrow">Candidate Details</p>
+          <h2>{application.candidate_name || "Candidate"}</h2>
+          <p>{application.email || "No email available"}</p>
+        </div>
+        <button className="link-button" type="button" onClick={onClose}>
+          Close
+        </button>
+      </div>
+
+      <div className="details-grid">
+        <DetailItem label="ATS Score" value={formatScore(application.ats_score)} />
+        <DetailItem label="Interview Score" value={formatScore(application.interview_score ?? application.interviewScore)} />
+        <DetailItem label="Question Source" value={formatQuestionSource(questionSource)} />
+        <DetailItem label="Interview Status" value={getInterviewLabel(application)} />
+      </div>
+
+      <div className="answer-review-list">
+        {answers.length ? (
+          answers.map((answer, index) => (
+            <article className="answer-review-card" key={answer.questionId || answer.question_id || index}>
+              <div className="answer-review-heading">
+                <span>Question {index + 1}</span>
+                <strong>{formatScoreWithMax(getAnswerScore(answer, "finalScore"))}</strong>
+              </div>
+              <p className="review-question">{answer.question}</p>
+              {formatQuestionSource(questionSource) === "Question Bank" && answer.expectedAnswer && (
+                <ReviewBlock label="Expected Answer" value={answer.expectedAnswer} />
+              )}
+              <ReviewBlock label="Candidate Transcript" value={answer.transcript || answer.answerText || answer.answer_text} />
+              <ReviewBlock label="Audio Path" value={answer.audioPath || answer.audio_path || "Not available"} />
+              <div className="details-grid compact">
+                <DetailItem label="Relevance" value={formatScore(getAnswerScore(answer, "relevance"))} />
+                <DetailItem label="Technical" value={formatScore(getAnswerScore(answer, "technical"))} />
+                <DetailItem label="Depth" value={formatScore(getAnswerScore(answer, "depth"))} />
+                <DetailItem label="Clarity" value={formatScore(getAnswerScore(answer, "clarity"))} />
+              </div>
+              <ReviewBlock label="Feedback" value={answer.feedback || answer.grading?.feedback || answer.evaluation?.feedback || "Not available"} />
+              <ReviewBlock
+                label="Missing Points"
+                value={formatList(answer.missingPoints || answer.missing_points || answer.grading?.missingPoints || answer.grading?.missing_points || answer.evaluation?.missingPoints || answer.evaluation?.missing_points)}
+              />
+              <ReviewBlock label="Submitted At" value={answer.submittedAt || answer.submitted_at || "Not available"} />
+            </article>
+          ))
+        ) : (
+          <p className="empty-details">No interview answers submitted yet.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+
+function DetailItem({ label, value }) {
+  return (
+    <article className="detail-item">
+      <span>{label}</span>
+      <strong>{value ?? "Not Available"}</strong>
+    </article>
+  );
+}
+
+
+function ReviewBlock({ label, value }) {
+  return (
+    <div className="review-block">
+      <span>{label}</span>
+      <p>{value || "Not available"}</p>
+    </div>
+  );
+}
+
+
+function formatQuestionSource(value) {
+  const normalized = String(value || "").toLowerCase();
+
+  if (normalized === "question_bank") {
+    return "Question Bank";
+  }
+
+  if (normalized === "qwen") {
+    return "Qwen";
+  }
+
+  return "Not Started";
+}
+
+
+function getAnswerScore(answer, field) {
+  const aliases = {
+    finalScore: ["finalScore", "final_score", "score"],
+    relevance: ["relevance", "relevanceScore", "relevance_score"],
+    technical: ["technical", "technicalScore", "technical_score", "technicalAccuracy", "technical_accuracy"],
+    depth: ["depth", "depthScore", "depth_score"],
+    clarity: ["clarity", "clarityScore", "clarity_score"],
+  };
+  const keys = aliases[field] || [field];
+  const sources = [answer, answer?.grading, answer?.evaluation];
+
+  for (const source of sources) {
+    if (!source || typeof source !== "object") {
+      continue;
+    }
+
+    for (const key of keys) {
+      const score = getScoreValue(source[key]);
+
+      if (score !== null) {
+        return score;
+      }
+    }
+  }
+
+  return null;
+}
+
+
+function formatScore(value) {
+  const score = getScoreValue(value);
+  return score === null ? "Not graded" : score.toFixed(1);
+}
+
+
+function formatScoreWithMax(value) {
+  const score = getScoreValue(value);
+  return score === null ? "Not graded" : `${score.toFixed(1)}/10`;
+}
+
+
+function getScoreValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value === "boolean") {
+    return null;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? Math.max(0, Math.min(10, value)) : null;
+  }
+
+  const match = String(value).match(/-?\d+(?:\.\d+)?/);
+
+  if (!match) {
+    return null;
+  }
+
+  const number = Number(match[0]);
+
+  if (!Number.isFinite(number)) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(10, number));
+}
+
+
+function formatList(value) {
+  if (Array.isArray(value)) {
+    return value.length ? value.join(", ") : "None";
+  }
+
+  return value || "None";
+}
+
+
 function isInterviewComplete(application) {
   return (
     application.interview_completed === true ||
@@ -394,48 +543,134 @@ function isInterviewComplete(application) {
 }
 
 
-function getVerificationLabel(application) {
-  if (
-    application.verification_completed === true ||
-    application.faceVerified === true ||
-    application.face_verified === true ||
-    String(application.verification_status || "").toLowerCase() === "verified"
-  ) {
-    return "Verified";
-  }
+function isReportReady(application) {
+  const status = String(application?.interview_status || application?.interviewStatus || "").toLowerCase();
 
-  return "Not Verified";
+  return (
+    application?.interview_completed === true ||
+    application?.interviewCompleted === true ||
+    ["completed", "partial", "quit", "interrupted"].includes(status)
+  );
 }
 
 
-function getVerificationStatusClass(application) {
-  return getVerificationLabel(application) === "Verified" ? "status-pass" : "status-muted";
+function isInterviewLocked(application) {
+  const status = String(application.interview_status || application.interviewStatus || "").toLowerCase();
+  return isInterviewComplete(application) || ["partial", "quit", "interrupted"].includes(status);
+}
+
+function getInterviewLink(application) {
+  return application?.interview_link || application?.verification_link || "";
+}
+
+
+function isLinkGenerated(application) {
+  return Boolean(application?.interview_link_generated || getInterviewLink(application));
 }
 
 
 function getInterviewLabel(application) {
+  const status = String(application.interview_status || application.interviewStatus || "").toLowerCase();
+
   if (isInterviewComplete(application)) {
     return "Interview Completed";
   }
 
-  if (String(application.interview_status || "").toLowerCase() === "in_progress") {
-    return "Processing";
+  if (status === "in_progress") {
+    return "In Progress";
+  }
+
+  if (status === "partial") {
+    return "Partial";
+  }
+
+  if (status === "quit") {
+    return "Quit";
+  }
+
+  if (status === "interrupted") {
+    return "Interrupted";
+  }
+
+  if (status === "expired") {
+    return "Expired";
+  }
+
+  if (isScheduleExpired(application)) {
+    return "Expired";
   }
 
   return "Not Started";
 }
 
 
-function getInterviewStatusClass(application) {
-  const label = getInterviewLabel(application);
+function isScheduleExpired(application) {
+  const scheduledAt = new Date(application?.interview_scheduled_at || "");
 
-  if (label === "Interview Completed") {
-    return "status-pass";
+  if (!Number.isFinite(scheduledAt.getTime())) {
+    return false;
   }
 
-  if (label === "Processing") {
-    return "status-processing";
+  return Date.now() > scheduledAt.getTime() + 60 * 60 * 1000;
+}
+
+
+async function fetchReportBlob(url, options) {
+  let response;
+
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    console.error("[Reports] API request failed:", error);
+    throw new Error("Could not reach backend for report generation.");
   }
 
-  return "status-muted";
+  if (!response.ok) {
+    const data = await response.json().catch(() => null);
+    throw new Error(data?.detail || data?.message || `Report generation failed. HTTP ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const filename = getFilenameFromDisposition(response.headers.get("Content-Disposition"));
+
+  if (!blob || blob.size === 0) {
+    throw new Error("Backend returned an empty report.");
+  }
+
+  return { blob, filename };
+}
+
+
+function getFilenameFromDisposition(disposition) {
+  const match = String(disposition || "").match(/filename="?([^"]+)"?/i);
+  return match ? match[1] : "";
+}
+
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename || "candidate-report.pdf";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+
+function openBlob(blob, targetWindow) {
+  const url = URL.createObjectURL(blob);
+  targetWindow.location.href = url;
+
+  window.setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
+}
+
+
+function safeFilename(value) {
+  return String(value || "candidate")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "") || "candidate";
 }

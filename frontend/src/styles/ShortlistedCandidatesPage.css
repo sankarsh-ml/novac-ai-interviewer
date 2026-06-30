@@ -392,6 +392,22 @@
   font-weight: 800;
 }
 
+.rank-badge{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    min-width:52px;
+    height:36px;
+    padding:0 12px;
+    border-radius:999px;
+    background:#2563eb;
+    color:#fff;
+    font-size:14px;
+    font-weight:700;
+    letter-spacing:0.3px;
+    box-shadow:0 2px 8px rgba(37,99,235,.2);
+}
+
 @media (max-width: 900px) {
   .report-toolbar {
     flex-direction: column;
@@ -415,3 +431,4 @@
     grid-template-columns: 1fr;
   }
 }
+

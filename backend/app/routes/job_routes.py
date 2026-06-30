@@ -4,6 +4,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from io import BytesIO
+from fastapi.responses import FileResponse,Response
+from fastapi import HTTPException
 
 from app.services.candidate_report_service import (
     generate_candidate_report_pdf,
@@ -17,7 +19,9 @@ from app.services.db_service import (
     get_all_jobs,
     get_application_by_id,
     list_applications,
+    update_application,
     save_job,
+    delete_job,
 )
 from app.routes.interview_routes import finalize_partial_interview
 
@@ -38,6 +42,8 @@ class BulkReportRequest(BaseModel):
     application_ids: list[str] = []
     job_id: str = ""
 
+class HRDecisionRequest(BaseModel):
+    decision: str
 
 @router.post("/jobs")
 def create_job(job: JobRequest):
@@ -111,6 +117,21 @@ def fetch_job_applications(job_id: str):
     print(f"[HR candidate details] response={json.dumps(response, ensure_ascii=False)}")
     return response
 
+@router.delete("/jobs/{job_id}")
+def remove_job(job_id: str):
+
+    if not delete_job(job_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found"
+        )
+
+    return {
+        "success": True,
+        "message": "Job and all associated data deleted."
+    }
+
+
 
 @router.get("/applications/{application_id}/report")
 def download_candidate_report(application_id: str):
@@ -165,6 +186,72 @@ def remove_application(application_id: str):
         "message": "Application and local artifacts deleted",
     }
 
+@router.get("/applications/{application_id}/resume/download")
+def download_application_resume(application_id: str):
+    application = get_application_by_id(application_id)
+
+    if application is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Application not found"
+        )
+
+    return FileResponse(
+        path=application["file_path"],
+        media_type="application/pdf",
+        filename=application["file_name"]
+    )
+
+@router.get("/applications/{application_id}/resume/view")
+def view_application_resume(application_id: str):
+
+    application = get_application_by_id(application_id)
+
+    if application is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Application not found"
+        )
+
+    with open(application["file_path"], "rb") as pdf_file:
+        pdf_bytes = pdf_file.read()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": "inline"
+        }
+    )
+
+@router.patch("/applications/{application_id}/hr-decision")
+def update_hr_decision(
+    application_id: str,
+    request: HRDecisionRequest,
+):
+    if request.decision not in ["pending", "selected", "rejected"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid decision."
+        )
+
+    success = update_application(
+        application_id,
+        {
+            "hr_decision": request.decision
+        },
+    )
+
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Application not found."
+        )
+
+    return {
+        "success": True,
+        "message": "HR decision updated."
+    }
 
 def _resolve_report_applications(payload: BulkReportRequest) -> list[dict]:
     requested_ids = [str(application_id).strip() for application_id in payload.application_ids if str(application_id).strip()]

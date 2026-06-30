@@ -7,7 +7,7 @@ from app.routes.job_routes import router as job_router
 from app.routes.kyc_routes import router as kyc_router
 from app.routes.question_bank_routes import router as question_bank_router
 from app.routes.resume_routes import router as resume_router
-
+from app.routes.admin_routes import router as admin_router
 
 app = FastAPI(title="Resume Text Extraction API")
 
@@ -31,7 +31,7 @@ app.include_router(interview_router, prefix="/api/interviews", tags=["Interview"
 app.include_router(job_router, prefix="/api/hr", tags=["HR"])
 app.include_router(question_bank_router, prefix="/api/hr", tags=["Question Bank"])
 app.include_router(question_bank_router, prefix="/api", tags=["Question Bank"])
-
+app.include_router(admin_router)
 
 @app.get("/")
 def root():

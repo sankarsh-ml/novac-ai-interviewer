@@ -20,9 +20,14 @@ _STORE_LOCK = threading.Lock()
 
 def create_application(data: dict) -> str:
     now = _now()
+
     application = {
         "application_id": data.get("application_id") or str(uuid.uuid4()),
         **_json_safe(data),
+
+        # NEW
+        "hr_decision": data.get("hr_decision", "pending"),
+
         "created_at": data.get("created_at") or now,
         "updated_at": data.get("updated_at") or now,
     }
@@ -33,7 +38,6 @@ def create_application(data: dict) -> str:
         _save_json(APPLICATIONS_FILE, applications)
 
     return application["application_id"]
-
 
 def get_application_by_id(application_id: str) -> dict | None:
     if not application_id:
@@ -150,6 +154,47 @@ def get_job_by_id(job_id: str) -> dict | None:
             return job
 
     return None
+
+def delete_job(job_id: str) -> bool:
+    if not job_id:
+        return False
+
+    with _STORE_LOCK:
+        jobs = _load_json(JOBS_FILE)
+        applications = _load_json(APPLICATIONS_FILE)
+
+        # Find the job
+        job_exists = any(
+            str(job.get("id")) == str(job_id)
+            for job in jobs
+        )
+
+        if not job_exists:
+            return False
+
+        # Delete every application's files
+        for application in list(applications):
+            if str(application.get("job_id")) == str(job_id):
+                _delete_application_artifacts(application)
+
+        # Remove applications from applications.json
+        applications = [
+            application
+            for application in applications
+            if str(application.get("job_id")) != str(job_id)
+        ]
+
+        # Remove job from jobs.json
+        jobs = [
+            job
+            for job in jobs
+            if str(job.get("id")) != str(job_id)
+        ]
+
+        _save_json(APPLICATIONS_FILE, applications)
+        _save_json(JOBS_FILE, jobs)
+
+    return True
 
 
 def _ensure_store_files():

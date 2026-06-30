@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-
+import ResumeViewerPage from "./pages/ResumeViewerPage";
 import AadhaarUploadPage from "./pages/AadhaarUploadPage.jsx";
 import AtsScreeningPage from "./pages/AtsScreeningPage.jsx";
 import CurrentJobsPage from "./pages/CurrentJobsPage.jsx";
@@ -19,7 +19,7 @@ import {
   getVerificationStatus,
 } from "./api/kycApi.js";
 import { checkInterviewAccess } from "./api/interviewApi.js";
-
+import AdminLoginPage from "./pages/AdminLoginPage.jsx";
 
 function App() {
   const [currentPage, setCurrentPage] = useState("home");
@@ -33,6 +33,7 @@ function App() {
   const [cameraStream, setCameraStream] = useState(null);
   const [isCameraRunning, setIsCameraRunning] = useState(false);
   const cameraStreamRef = useRef(null);
+  const [selectedResume, setSelectedResume] = useState(null);
 
   useEffect(() => {
     const stopOnUnload = () => {
@@ -296,6 +297,15 @@ function App() {
     );
   }
 
+  if (currentPage === "login") {
+    return (
+      <AdminLoginPage
+        onLoginSuccess={() => setCurrentPage("admin")}
+        onBack={handleBackHome}
+      />
+    );
+  }
+
   if (currentPage === "admin") {
     return (
       <HRHomePage
@@ -353,31 +363,35 @@ function App() {
   if (currentPage === "job-applications") {
     return (
       <JobApplicationsPage
-        job={selectedJob}
-        onBack={() => setCurrentPage("current-jobs")}
-        onViewShortlisted={(job) => {
-          setSelectedJob(job);
-          setCurrentPage("shortlisted");
-        }}
-      />
+          job={selectedJob}
+          onBack={() => setCurrentPage("current-jobs")}
+          onViewShortlisted={(job) => {
+                setSelectedJob(job);
+                setCurrentPage("shortlisted");
+            }}
+          onViewResume={(application) => {
+            setSelectedResume(application);
+            setCurrentPage("resume");
+              }}
+        />
     );
   }
 
   if (currentPage === "shortlisted") {
     return (
       <ShortlistedCandidatesPage
-        job={selectedJob}
-        onBack={() => setCurrentPage("job-applications")}
-        onConfigureInterview={(application) => {
-          setSelectedInterviewApplication(application);
-          window.history.replaceState(
-            null,
-            "",
-            `/configure-interview/${encodeURIComponent(application.application_id)}`
-          );
-          setCurrentPage("configure-interview");
-        }}
-      />
+          job={selectedJob}
+          onBack={() => setCurrentPage("job-applications")}
+          onConfigureInterview={(application) => {
+            setSelectedInterviewApplication(application);
+            window.history.replaceState(
+              null,
+              "",
+              `/configure-interview/${encodeURIComponent(application.application_id)}`
+            );
+            setCurrentPage("configure-interview");
+          }}
+        />
     );
   }
 
@@ -414,6 +428,15 @@ function App() {
     );
   }
 
+  if (currentPage === "resume") {
+    return (
+      <ResumeViewerPage
+        application={selectedResume}
+        onBack={() => setCurrentPage("job-applications")}
+      />
+    );
+  }
+
   if (currentPage === "candidate-waiting") {
     return (
       <main className="home-page">
@@ -427,7 +450,7 @@ function App() {
 
   return (
     <HomePage
-      onOpenAdmin={() => setCurrentPage("admin")}
+    onOpenAdmin={() => setCurrentPage("login")}
     />
   );
 }

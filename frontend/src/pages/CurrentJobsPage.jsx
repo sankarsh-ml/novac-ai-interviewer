@@ -29,6 +29,35 @@ function CurrentJobsPage({
     }
   };
 
+  const handleDeleteJob = async (jobId, jobTitle) => {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete "${jobTitle}"?\n\nThis will permanently delete:\n\n• The job\n• All applications\n• Uploaded resumes\n• Interview recordings\n• Interview transcripts\n• Candidate reports\n\nThis action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/hr/jobs/${jobId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response.json();
+
+      if (data.success) {
+        alert("Job deleted successfully.");
+        fetchJobs(); // Refresh the list
+      } else {
+        alert(data.message || "Failed to delete job.");
+      }
+    } catch (error) {
+      console.error(error);
+      alert("Something went wrong.");
+    }
+  };
+
   return (
     <main className="hr-page">
       <div className="hr-container">
@@ -107,6 +136,15 @@ function CurrentJobsPage({
                   onClick={() => onViewQuestionBank(job)}
                 >
                   View Question Bank
+                </button>
+
+                <button
+                  className="delete-button"
+                  onClick={() =>
+                    handleDeleteJob(job.id, job.title)
+                  }
+                >
+                  Delete Job
                 </button>
               </div>
               </div>

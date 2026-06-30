@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from app.services.db_service import get_job_by_id
 from app.services.question_bank_service import load_question_bank
 from app.services.qwen_service import (
+    call_qwen,
     call_qwen_json,
+    get_qwen_config,
     use_qwen_enabled,
 )
 
@@ -17,6 +20,7 @@ DIFFICULTY_SPLIT = {
     "Medium": 2,
     "Hard": 1,
 }
+DIFFICULTY_ORDER = ("easy", "medium", "hard")
 
 
 def generate_interview_questions(application: dict) -> dict:
@@ -80,6 +84,106 @@ def generate_interview_questions(application: dict) -> dict:
     }
 
 
+def generate_qwen_interview_questions(application: dict, difficulty_split: dict, question_count: int | None = None) -> dict:
+    split = _normalize_split(difficulty_split)
+    total = sum(split.values())
+    requested_count = int(question_count or total)
+
+    if total <= 0 or total != requested_count:
+        return {
+            "success": False,
+            "message": "Difficulty split must add up to the total number of interview questions.",
+            "questions": [],
+        }
+
+    if not use_qwen_enabled():
+        return {
+            "success": False,
+            "message": "Question generation failed. Please try again or use question bank selection.",
+            "questions": [],
+            "qwen_error": "USE_QWEN is false",
+        }
+
+    prompt = _build_qwen_split_prompt(application, split, total)
+    qwen_config = get_qwen_config()
+    print("[Qwen question generation] prompt_length=", len(prompt))
+    print("[Qwen question generation] model=", qwen_config.get("model"), "json_mode=True")
+    print("[Qwen question generation] difficulty_split=", split)
+
+    last_error = ""
+    for attempt in range(1, 3):
+        result = call_qwen(
+            prompt,
+            system_prompt=(
+                "You are an expert technical interviewer. "
+                "Return only the required JSON object. Do not return arrays at the top level."
+            ),
+            temperature=0.2 if attempt == 1 else 0.1,
+            prompt_type="qwen_generated_interview_questions",
+            json_mode=True,
+            num_predict=max(900, total * 230),
+        )
+        print("[Qwen question generation] attempt=", attempt, "success=", result.get("success"))
+
+        if result.get("success") is False or result.get("qwen_error"):
+            last_error = _clean_qwen_error(result.get("message") or result.get("qwen_error"))
+            print("[Qwen question generation] parse_failure=", last_error)
+            continue
+
+        response_text = str(result.get("response") or "")
+        print("[Qwen question generation] raw_response_length=", len(response_text))
+        parsed = _parse_qwen_generated_response(result)
+
+        if parsed.get("success") is False:
+            last_error = parsed.get("message") or "Could not parse Qwen generated questions."
+            print("[Qwen question generation] parse_failure=", last_error)
+            if attempt == 1:
+                print("[Qwen question generation] retrying_with_strict_prompt=True")
+                prompt = _build_qwen_repair_prompt(prompt, response_text, last_error, split, total)
+            continue
+
+        questions = parsed["questions"]
+        validation_error = _validate_qwen_split(questions, split)
+        distribution = _difficulty_distribution(questions)
+        print(
+            "[Qwen question generation] parse_success=",
+            not bool(validation_error),
+            "total=",
+            len(questions),
+            "easy=",
+            distribution["easy"],
+            "medium=",
+            distribution["medium"],
+            "hard=",
+            distribution["hard"],
+        )
+
+        if not validation_error:
+            return {
+                "success": True,
+                "source": "qwen_generated",
+                "question_source": "qwen_generated",
+                "candidate_name": _get_candidate_name(application),
+                "difficulty_split": split,
+                "questions": _renumber_questions(questions),
+            }
+
+        last_error = validation_error
+        print("[Qwen question generation] parse_failure=", validation_error)
+        if attempt == 1:
+            print("[Qwen question generation] retrying_with_strict_prompt=True")
+            prompt = _build_qwen_repair_prompt(prompt, response_text, validation_error, split, total)
+
+    return {
+        "success": False,
+        "source": "qwen_generated",
+        "question_source": "qwen_generated",
+        "message": "Qwen generated an invalid question set. Please try again.",
+        "qwen_error": last_error,
+        "questions": [],
+    }
+
+
 def _fallback_response(application: dict, questions: list[dict], qwen_error: str | None) -> dict:
     return {
         "success": True,
@@ -140,6 +244,80 @@ Question quality rules:
 - If ATS missing skills exist, ask at most one gap question.
 - Mention actual projects/skills where possible.
 - Prefer questions about FastAPI, React, OCR, PaddleOCR, OpenCV, AI/ML, MongoDB, document fraud detection, ATS matching, face verification, and deployable pipelines if present in resume.
+
+Resume and ATS context:
+{json.dumps(context, ensure_ascii=False, indent=2)}
+""".strip()
+
+
+def _build_qwen_split_prompt(application: dict, split: dict, total: int) -> str:
+    context = _build_resume_context(application)
+    job = context.get("job", {}) if isinstance(context.get("job"), dict) else {}
+
+    return f"""
+You are an expert technical interviewer.
+
+Generate exactly {total} interview questions.
+
+Difficulty split:
+- easy: {split["easy"]}
+- medium: {split["medium"]}
+- hard: {split["hard"]}
+
+Job Title:
+{job.get("title", "")}
+
+Job Description:
+{job.get("description", "")}
+
+Required Skills:
+{json.dumps(job.get("required_skills", []), ensure_ascii=False)}
+
+Candidate Resume Skills:
+{json.dumps(context.get("skills", []), ensure_ascii=False)}
+
+Candidate Projects:
+{json.dumps(context.get("projects", []), ensure_ascii=False)}
+
+Candidate Experience:
+{json.dumps(context.get("experience", []), ensure_ascii=False)}
+
+Rules:
+1. Return ONLY valid JSON.
+2. Return ONLY a JSON object.
+3. The JSON object must have exactly one top-level key: "questions".
+4. "questions" must be an array.
+5. Do not include markdown.
+6. Do not include explanation.
+7. Do not include keys like success, message, error, qwen_error, model, or base_url.
+8. Generate exactly {split["easy"]} easy, {split["medium"]} medium, and {split["hard"]} hard questions.
+9. Total questions must be exactly {total}.
+10. The difficulty value must be exactly one of: easy, medium, hard.
+11. Questions must be based on overlap between job requirements and candidate resume/projects.
+12. Prefer questions connected to candidate projects.
+13. Avoid generic HR questions.
+14. Every question must include a useful expected answer.
+15. Every question object MUST include all five keys: question, areaOfExpertise, difficulty, expectedAnswer, source.
+
+Return ONLY this JSON object format:
+{{
+  "questions": [
+    {{
+      "question": "string",
+      "areaOfExpertise": "specific skill/topic such as React, FastAPI, MongoDB, AI/ML, System Design",
+      "difficulty": "easy",
+      "expectedAnswer": "string",
+      "source": "qwen_generated"
+    }}
+  ]
+}}
+
+Rules:
+- Do not omit areaOfExpertise.
+- areaOfExpertise must be a short topic name, not a sentence.
+- Do not use markdown.
+- Do not include explanation.
+- Do not include success/message/error keys.
 
 Resume and ATS context:
 {json.dumps(context, ensure_ascii=False, indent=2)}
@@ -356,6 +534,280 @@ def _normalize_questions(value: Any) -> list[dict]:
         )
 
     return questions
+
+
+def _normalize_split(value: dict) -> dict:
+    split = value if isinstance(value, dict) else {}
+    normalized = {}
+
+    for difficulty in DIFFICULTY_ORDER:
+        try:
+            count = int(split.get(difficulty, 0))
+        except (TypeError, ValueError):
+            count = 0
+
+        normalized[difficulty] = max(0, count)
+
+    return normalized
+
+
+def _parse_qwen_generated_response(value: Any) -> dict:
+    parsed = _extract_generated_json_value(value)
+
+    if isinstance(parsed, dict) and parsed.get("success") is False:
+        return {
+            "success": False,
+            "message": parsed.get("message") or parsed.get("qwen_error") or "Qwen service returned an error.",
+        }
+
+    if isinstance(parsed, dict) and any(key in parsed for key in ("error", "qwen_error")):
+        return {
+            "success": False,
+            "message": parsed.get("error") or parsed.get("qwen_error") or "Qwen returned an error object.",
+        }
+
+    if isinstance(parsed, dict) and "message" in parsed and not any(
+        key in parsed for key in ("questions", "finalQuestions", "generatedQuestions")
+    ):
+        return {
+            "success": False,
+            "message": str(parsed.get("message") or "Qwen returned a message instead of questions."),
+        }
+
+    questions_value = parsed
+
+    if isinstance(parsed, dict):
+        for key in ("questions", "finalQuestions", "generatedQuestions"):
+            if isinstance(parsed.get(key), list):
+                questions_value = parsed[key]
+                break
+        else:
+            return {
+                "success": False,
+                "message": "Qwen response did not contain a questions array.",
+            }
+
+    questions, errors = _normalize_qwen_generated_questions(questions_value)
+
+    if errors:
+        return {
+            "success": False,
+            "message": "; ".join(errors[:3]),
+        }
+
+    if not questions:
+        return {
+            "success": False,
+            "message": "Qwen returned zero usable questions.",
+        }
+
+    return {
+        "success": True,
+        "questions": questions,
+    }
+
+
+def _extract_generated_json_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        if value.get("success") is False or value.get("qwen_error"):
+            return value
+
+        if "response" in value:
+            return _extract_generated_json_value(value.get("response"))
+
+        return value
+
+    if isinstance(value, list):
+        return value
+
+    text = _strip_markdown_fences(str(value or "").strip())
+
+    if not text:
+        return {
+            "success": False,
+            "message": "Qwen returned an empty response.",
+        }
+
+    decoder = json.JSONDecoder()
+
+    for index, character in enumerate(text):
+        if character not in "{[":
+            continue
+
+        try:
+            parsed, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+
+        return parsed
+
+    return {
+        "success": False,
+        "message": "Qwen response did not contain valid JSON.",
+    }
+
+
+def _strip_markdown_fences(text: str) -> str:
+    cleaned = str(text or "").strip()
+
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+
+        cleaned = "\n".join(lines).strip()
+
+    return cleaned
+
+
+def _build_qwen_repair_prompt(original_prompt: str, invalid_output: str, reason: str, split: dict, total: int) -> str:
+    clipped_output = str(invalid_output or "")[:5000]
+    return f"""
+{original_prompt}
+
+The previous output was invalid:
+{reason}
+
+Invalid output:
+{clipped_output}
+
+Fix this into the required JSON object with exactly the requested count and difficulty split.
+Every question object must include question, areaOfExpertise, difficulty, expectedAnswer, and source.
+Return only:
+{{
+  "questions": [...]
+}}
+
+Required count: {total}
+Required split: easy={split["easy"]}, medium={split["medium"]}, hard={split["hard"]}
+""".strip()
+
+
+def _normalize_qwen_generated_questions(value: Any) -> tuple[list[dict], list[str]]:
+    if isinstance(value, dict):
+        value = value.get("questions") or value.get("items") or []
+
+    if not isinstance(value, list):
+        return [], ["Qwen questions payload was not an array."]
+
+    questions = []
+    errors = []
+
+    for index, item in enumerate(value, start=1):
+        if not isinstance(item, dict):
+            errors.append(f"Question {index} was not an object.")
+            continue
+
+        question_text = str(item.get("question") or item.get("text") or "").strip()
+
+        if not question_text:
+            errors.append(f"Question {index} is missing question.")
+            continue
+
+        difficulty = str(item.get("difficulty") or "").strip().lower()
+
+        if difficulty not in DIFFICULTY_ORDER:
+            errors.append(f"Question {index} has invalid difficulty.")
+            continue
+
+        raw_area = str(item.get("areaOfExpertise") or item.get("area_of_expertise") or "").strip()
+        area = raw_area or _infer_area_of_expertise(item, question_text)
+        expected_answer = str(item.get("expectedAnswer") or item.get("expected_answer") or item.get("expected_focus") or "").strip()
+
+        if not raw_area:
+            print(f"[Qwen question generation] areaOfExpertise missing for question {index}, inferred={area}")
+
+        if not expected_answer:
+            errors.append(f"Question {index} is missing expectedAnswer.")
+            continue
+
+        questions.append(
+            {
+                "id": str(item.get("id") or f"q{index}"),
+                "question_id": str(item.get("question_id") or item.get("id") or f"q{index}"),
+                "question": question_text,
+                "areaOfExpertise": area,
+                "area_of_expertise": area,
+                "areaOfInterest": area,
+                "area_of_interest": area,
+                "category": area,
+                "difficulty": difficulty,
+                "expectedAnswer": expected_answer,
+                "expected_answer": expected_answer,
+                "expected_focus": expected_answer,
+                "source": "qwen_generated",
+            }
+        )
+
+    return _dedupe_questions(questions), errors
+
+
+def _infer_area_of_expertise(item: dict, question_text: str) -> str:
+    for key in (
+        "area",
+        "topic",
+        "category",
+        "skill",
+        "technology",
+        "areaOfInterest",
+        "area_of_interest",
+    ):
+        value = str(item.get(key) or "").strip()
+
+        if value:
+            return value
+
+    lowered = str(question_text or "").lower()
+    keyword_areas = (
+        (("react", "frontend", "ui", "javascript", "typescript"), "Frontend Development"),
+        (("fastapi", "flask", "api", "backend", "server"), "Backend Development"),
+        (("mongodb", "database", "schema", "query"), "Database"),
+        (("qwen", "llm", "prompt", "ai", "model"), "AI/LLM"),
+        (("python", "pandas", "numpy", "ml"), "Python/ML"),
+        (("resume", "ats", "semantic", "ranking"), "Resume Screening"),
+        (("ocr", "document", "aadhaar", "pan", "id"), "Document Verification"),
+        (("project", "architecture", "pipeline"), "System Design"),
+    )
+
+    for keywords, area in keyword_areas:
+        if any(_contains_keyword(lowered, keyword) for keyword in keywords):
+            return area
+
+    return "General Technical"
+
+
+def _contains_keyword(text: str, keyword: str) -> bool:
+    escaped_keyword = re.escape(keyword.lower())
+    return re.search(rf"(?<![a-z0-9]){escaped_keyword}(?![a-z0-9])", text) is not None
+
+
+def _difficulty_distribution(questions: list[dict]) -> dict:
+    return {
+        difficulty: len([question for question in questions if str(question.get("difficulty") or "").lower() == difficulty])
+        for difficulty in DIFFICULTY_ORDER
+    }
+
+
+def _validate_qwen_split(questions: list[dict], split: dict) -> str:
+    total = sum(split.values())
+
+    if len(questions) != total:
+        return f"Qwen returned {len(questions)} questions; expected {total}."
+
+    distribution = _difficulty_distribution(questions)
+
+    for difficulty in DIFFICULTY_ORDER:
+        if distribution[difficulty] != split[difficulty]:
+            return (
+                f"Qwen returned {distribution[difficulty]} {difficulty} questions; "
+                f"expected {split[difficulty]}."
+            )
+
+    return ""
 
 
 def _prepare_final_questions(raw_questions: Any, fallback_questions: list[dict]) -> tuple[list[dict], str | None]:

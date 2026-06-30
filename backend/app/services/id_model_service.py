@@ -1,5 +1,6 @@
 import json
 import os
+import json
 from pathlib import Path
 import re
 import shutil
@@ -14,6 +15,23 @@ AADHAAR_PHOTO_STORAGE_DIR = APP_DIR / "storage" / "aadhaar_photos"
 AADHAAR_PHOTO_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
 VALIDATOR_TIMEOUT_SECONDS = 90
+SUPPORTED_INDIAN_ID_MODELS = {
+    "aadhaar": "Aadhaar",
+    "aadhar": "Aadhaar",
+    "aadhar_front": "Aadhaar",
+    "aadhar_back": "Aadhaar",
+    "aadhaar_front": "Aadhaar",
+    "aadhaar_back": "Aadhaar",
+    "pan": "Pan_Card",
+    "pan_card": "Pan_Card",
+    "pan_card_front": "Pan_Card",
+    "passport": "Passport",
+    "voter": "Voter_Id",
+    "voter_id": "Voter_Id",
+    "driving_license": "Driving_License",
+    "driving_license_front": "Driving_License",
+    "driving_license_back": "Driving_License",
+}
 
 
 def _default_indian_id_python() -> Path:
@@ -245,6 +263,31 @@ def _extract_document_type(raw_output):
     return "unknown"
 
 
+def _normalize_document_type(value: str) -> str:
+    text = re.sub(r"[^a-z0-9]+", "_", str(value or "").lower()).strip("_")
+
+    if "aadhar" in text or "aadhaar" in text:
+        return "aadhaar"
+
+    if "pan" in text:
+        return "pan"
+
+    if "passport" in text:
+        return "passport"
+
+    if "voter" in text:
+        return "voter_id"
+
+    if "driving" in text or text in {"dl", "license", "licence"}:
+        return "driving_license"
+
+    return text or "unknown"
+
+
+def _model_for_document_type(document_type: str) -> str | None:
+    return SUPPORTED_INDIAN_ID_MODELS.get(_normalize_document_type(document_type))
+
+
 def _extract_confidence(raw_output):
     if not isinstance(raw_output, dict):
         return 0.0
@@ -374,6 +417,15 @@ def _extract_fields_from_raw_output(raw_output):
             "aadhar_number",
             "uid",
             "id_number",
+            "pan",
+            "pan_number",
+            "passport_number",
+            "voter_id",
+            "voter_number",
+            "dl_no",
+            "dl_number",
+            "license_number",
+            "licence_number",
         ],
     )
 
@@ -387,6 +439,109 @@ def _extract_fields_from_raw_output(raw_output):
         "aadhaar_number": aadhaar_number,
         "masked_aadhaar_number": _mask_aadhaar_number(aadhaar_number),
         "flattened": flattened,
+    }
+
+
+def classify_indian_government_id(file_path: str) -> dict:
+    try:
+        image_path = _ensure_image_file(file_path)
+    except Exception as exc:
+        return {
+            "success": False,
+            "documentType": "unknown",
+            "document_type": "unknown",
+            "isValidIndianGovId": False,
+            "confidence": 0.0,
+            "message": f"Indian Government ID file could not be prepared for validation: {exc}",
+            "raw_output": {},
+        }
+
+    raw_output = run_indian_id_validator(image_path, classify_only=True)
+
+    if raw_output.get("success") is False:
+        return {
+            "success": False,
+            "documentType": "unknown",
+            "document_type": "unknown",
+            "isValidIndianGovId": False,
+            "confidence": 0.0,
+            "message": raw_output.get("error") or "Indian ID validator failed.",
+            "raw_output": _sanitize_raw_output(raw_output),
+        }
+
+    raw_document_type = _extract_document_type(raw_output)
+    document_type = _normalize_document_type(raw_document_type)
+    valid = _model_for_document_type(document_type) is not None
+
+    return {
+        "success": True,
+        "documentType": document_type if valid else "unknown",
+        "document_type": document_type if valid else "unknown",
+        "rawDocumentType": raw_document_type,
+        "raw_document_type": raw_document_type,
+        "isValidIndianGovId": valid,
+        "is_valid_indian_gov_id": valid,
+        "confidence": _extract_confidence(raw_output),
+        "message": "Indian Government ID detected" if valid else "Unsupported or unknown Indian ID document",
+        "raw_output": _sanitize_raw_output(raw_output),
+    }
+
+
+def extract_indian_id_fields(file_path: str, document_type: str) -> dict:
+    try:
+        image_path = _ensure_image_file(file_path)
+    except Exception as exc:
+        return {
+            "success": False,
+            "message": f"Indian Government ID file could not be prepared for field extraction: {exc}",
+            "name": "",
+            "dob": "",
+            "idNumber": "",
+            "id_number": "",
+            "raw_output": {},
+        }
+
+    model = _model_for_document_type(document_type)
+
+    if not model:
+        return {
+            "success": False,
+            "message": "Unsupported or unknown Indian ID document.",
+            "name": "",
+            "dob": "",
+            "idNumber": "",
+            "id_number": "",
+            "raw_output": {},
+        }
+
+    raw_output = run_indian_id_validator(image_path, model=model, classify_only=False)
+
+    if raw_output.get("success") is False:
+        return {
+            "success": False,
+            "message": raw_output.get("error") or "Indian ID validator extraction failed.",
+            "name": "",
+            "dob": "",
+            "idNumber": "",
+            "id_number": "",
+            "raw_output": _sanitize_raw_output(raw_output),
+        }
+
+    fields = _extract_fields_from_raw_output(raw_output)
+    id_number = fields["masked_aadhaar_number"] or fields["aadhaar_number"]
+
+    return {
+        "success": bool(fields["name"] or id_number),
+        "message": "Indian Government ID fields extracted" if (fields["name"] or id_number) else "Indian Government ID fields could not be extracted",
+        "name": fields["name"],
+        "dob": fields["dob"],
+        "gender": fields["gender"],
+        "idNumber": id_number,
+        "id_number": id_number,
+        "aadhaar_number": fields["masked_aadhaar_number"] if _normalize_document_type(document_type) == "aadhaar" else "",
+        "masked_aadhaar_number": fields["masked_aadhaar_number"] if _normalize_document_type(document_type) == "aadhaar" else "",
+        "raw_output": _sanitize_raw_output(raw_output),
+        "raw_keys": list(fields["flattened"].keys()),
     }
 
 

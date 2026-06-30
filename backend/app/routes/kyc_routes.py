@@ -4,21 +4,27 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.services.db_service import get_resume_application, update_application
-from app.services.kyc_service import verify_aadhaar_for_application
+from app.services.kyc_service import verify_indian_id_for_application
 
 
 router = APIRouter()
 
 APP_DIR = Path(__file__).resolve().parents[1]
-AADHAAR_UPLOAD_DIR = APP_DIR / "storage" / "aadhaar"
-AADHAAR_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+GOVERNMENT_ID_UPLOAD_DIR = APP_DIR / "storage" / "government_id"
+GOVERNMENT_ID_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 CANDIDATE_STORAGE_DIR = APP_DIR / "storage" / "candidates"
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
+
+try:
+    from bson import ObjectId
+except Exception:
+    ObjectId = None
 
 
 class MarkVerifiedRequest(BaseModel):
@@ -26,6 +32,19 @@ class MarkVerifiedRequest(BaseModel):
     face_score: float | None = None
     attempts: int = 1
     matches: int = 1
+
+
+def make_json_safe(data):
+    custom_encoder = {}
+
+    if ObjectId is not None:
+        custom_encoder[ObjectId] = str
+
+    return jsonable_encoder(data, custom_encoder=custom_encoder)
+
+
+def _kyc_json_response(payload: dict, status_code: int = 200) -> JSONResponse:
+    return JSONResponse(status_code=status_code, content=make_json_safe(payload))
 
 
 @router.get("/candidate/{application_id}")
@@ -55,6 +74,8 @@ def get_verification_status(application_id: str):
             "verification_status": application.get("verification_status", "not_started"),
             "aadhaarVerified": _is_aadhaar_verified(application),
             "aadhaar_verified": _is_aadhaar_verified(application),
+            "governmentIdVerified": _is_aadhaar_verified(application),
+            "government_id_verified": _is_aadhaar_verified(application),
             "faceVerified": _is_face_verified(application),
             "face_verified": _is_face_verified(application),
             "verification_completed": _is_verification_completed(application),
@@ -118,14 +139,15 @@ def mark_candidate_verified(application_id: str, payload: MarkVerifiedRequest):
     }
 
 
+@router.post("/identity/upload/{application_id}")
 @router.post("/aadhaar/upload/{application_id}")
-async def upload_aadhaar(application_id: str, aadhaar_file: UploadFile = File(...)):
+async def upload_indian_government_id(application_id: str, aadhaar_file: UploadFile = File(...)):
     try:
         if not application_id:
             raise HTTPException(status_code=400, detail="Application ID is missing.")
 
         if not aadhaar_file:
-            raise HTTPException(status_code=400, detail="Aadhaar file is missing.")
+            raise HTTPException(status_code=400, detail="Indian Government ID file is missing.")
 
         original_filename = aadhaar_file.filename or ""
         extension = Path(original_filename).suffix.lower()
@@ -133,54 +155,54 @@ async def upload_aadhaar(application_id: str, aadhaar_file: UploadFile = File(..
         if extension not in ALLOWED_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail="Only JPG, JPEG, PNG, or PDF Aadhaar files are allowed.",
+                detail="Only JPG, JPEG, PNG, or PDF Indian Government ID files are allowed.",
             )
 
-        candidate_dir = CANDIDATE_STORAGE_DIR / application_id / "aadhaar"
+        candidate_dir = CANDIDATE_STORAGE_DIR / application_id / "government_id"
         candidate_dir.mkdir(parents=True, exist_ok=True)
 
         safe_filename = f"{uuid.uuid4()}_{Path(original_filename).name}"
-        aadhaar_file_path = candidate_dir / safe_filename
+        id_file_path = candidate_dir / safe_filename
 
         file_bytes = await aadhaar_file.read()
 
         if not file_bytes:
-            raise HTTPException(status_code=400, detail="Uploaded Aadhaar file is empty.")
+            raise HTTPException(status_code=400, detail="Uploaded Indian Government ID file is empty.")
 
-        with open(aadhaar_file_path, "wb") as file:
+        with open(id_file_path, "wb") as file:
             file.write(file_bytes)
 
-        print("\n========== AADHAAR UPLOAD ROUTE ==========")
+        print("\n========== INDIAN GOVERNMENT ID UPLOAD ROUTE ==========")
         print("APPLICATION ID:", application_id)
-        print("AADHAAR FILE:", aadhaar_file_path)
-        print("FILE EXISTS:", aadhaar_file_path.exists())
-        print("FILE SIZE:", aadhaar_file_path.stat().st_size)
+        print("ID FILE:", id_file_path)
+        print("FILE EXISTS:", id_file_path.exists())
+        print("FILE SIZE:", id_file_path.stat().st_size)
         print("==========================================\n")
 
-        result = verify_aadhaar_for_application(
+        result = verify_indian_id_for_application(
             application_id=application_id,
-            aadhaar_file_path=str(aadhaar_file_path),
+            id_file_path=str(id_file_path),
         )
 
         status_code = result.get("status_code", 200)
 
-        return JSONResponse(
-            status_code=status_code,
-            content={
+        return _kyc_json_response(
+            {
                 "success": result.get("success", False),
-                "message": result.get("message", "Aadhaar verification completed."),
+                "message": result.get("message", "Indian Government ID verification completed."),
                 "data": result.get("data", {}),
             },
+            status_code=status_code,
         )
 
     except HTTPException as error:
-        return JSONResponse(
-            status_code=error.status_code,
-            content={
+        return _kyc_json_response(
+            {
                 "success": False,
                 "message": error.detail,
                 "data": {},
             },
+            status_code=error.status_code,
         )
 
     except Exception as error:
@@ -188,21 +210,22 @@ async def upload_aadhaar(application_id: str, aadhaar_file: UploadFile = File(..
         print(traceback.format_exc())
         print("=====================================\n")
 
-        return JSONResponse(
-            status_code=500,
-            content={
+        return _kyc_json_response(
+            {
                 "success": False,
-                "message": f"KYC backend crashed: {str(error)}",
+                "message": "Indian Government ID verification failed. Please upload a clearer official ID.",
                 "data": {
                     "error_type": type(error).__name__,
                     "next_step": "debug_backend",
                 },
             },
+            status_code=500,
         )
 
 
 def _candidate_verification_payload(application: dict) -> dict:
-    aadhaar = application.get("aadhaar_verification") or application.get("kyc_verification") or {}
+    identity = application.get("identityVerification") or application.get("identity_verification") or {}
+    aadhaar = application.get("aadhaar_verification") or application.get("kyc_verification") or identity or {}
     resume = application.get("resume") if isinstance(application.get("resume"), dict) else {}
 
     return {
@@ -213,11 +236,16 @@ def _candidate_verification_payload(application: dict) -> dict:
         "verification_status": application.get("verification_status", "not_started"),
         "aadhaarVerified": _is_aadhaar_verified(application),
         "aadhaar_verified": _is_aadhaar_verified(application),
+        "governmentIdVerified": _is_aadhaar_verified(application),
+        "government_id_verified": _is_aadhaar_verified(application),
         "faceVerified": _is_face_verified(application),
         "face_verified": _is_face_verified(application),
         "verification_completed": _is_verification_completed(application),
         "verification_timestamp": application.get("verification_timestamp"),
         "aadhaar_verification": aadhaar,
+        "identityVerification": identity,
+        "identity_verification": identity,
+        "documentType": identity.get("documentType") or identity.get("document_type") or application.get("documentType") or "aadhaar",
         "aadhaar_extracted_name": application.get("aadhaar_extracted_name") or aadhaar.get("extracted_name", ""),
         "aadhaar_face_image_available": bool(
             application.get("aadhaar_face_image_path")
@@ -244,10 +272,16 @@ def _is_verification_completed(application: dict) -> bool:
 
 
 def _is_aadhaar_verified(application: dict) -> bool:
+    identity = application.get("identityVerification") or application.get("identity_verification") or {}
     return (
         application.get("aadhaarVerified") is True
         or application.get("aadhaar_verified") is True
+        or application.get("governmentIdVerified") is True
+        or application.get("government_id_verified") is True
+        or identity.get("isValidIndianGovId") is True
+        or identity.get("is_valid_indian_gov_id") is True
         or str(application.get("verification_status") or "").lower() in {"aadhaar_passed", "verified"}
+        or str(application.get("verification_status") or "").lower() in {"government_id_passed", "identity_passed"}
     )
 
 

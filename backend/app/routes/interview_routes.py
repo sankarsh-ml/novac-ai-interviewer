@@ -6,6 +6,7 @@ import os
 import base64
 from pathlib import Path
 from datetime import datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
@@ -21,7 +22,7 @@ from app.services.face_verification_service import (
     get_face_app,
     verify_faces,
 )
-from app.services.question_generation_service import generate_interview_questions
+from app.services.question_generation_service import generate_interview_questions, generate_qwen_interview_questions
 from app.services.question_bank_service import load_question_bank
 from app.services.qwen_service import is_qwen_available
 from app.services.whisper_service import transcribe_audio
@@ -92,10 +93,22 @@ class QuestionFilters(BaseModel):
     job_role: str = "all"
 
 
+class DifficultySplit(BaseModel):
+    easy: Any = 0
+    medium: Any = 0
+    hard: Any = 0
+
+
 class ConfigureQuestionsRequest(BaseModel):
-    number_of_questions: int
+    number_of_questions: Any = None
+    questionCount: Any = None
     selected_question_ids: list[str] = Field(default_factory=list)
+    selectedQuestionIds: list[str] = Field(default_factory=list)
     filters_used: QuestionFilters = Field(default_factory=QuestionFilters)
+    question_source: str = "question_bank"
+    questionSource: str = ""
+    difficulty_split: DifficultySplit | dict | None = None
+    difficultySplit: DifficultySplit | dict | None = None
 
 
 @router.post("/create-link")
@@ -150,8 +163,15 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
     selected_ids = interview_config.get("selected_question_ids") if isinstance(interview_config.get("selected_question_ids"), list) else []
     requested_count = int(interview_config.get("number_of_questions") or application.get("total_questions") or 0)
     configured_count = len(configured_questions.get("questions") or [])
+    question_source = str(interview_config.get("question_source") or configured_questions.get("question_source") or configured_questions.get("source") or "question_bank")
 
-    if requested_count <= 0 or len(selected_ids) != requested_count or configured_count != requested_count:
+    if requested_count <= 0 or configured_count != requested_count:
+        raise HTTPException(
+            status_code=400,
+            detail="Configured question count must exactly match number_of_questions before generating the link.",
+        )
+
+    if question_source == "question_bank" and len(selected_ids) != requested_count:
         raise HTTPException(
             status_code=400,
             detail="Selected question count must exactly match number_of_questions before generating the link.",
@@ -175,6 +195,14 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
         "link": verification_url,
         "verification_url": verification_url,
         "interview_url": interview_url,
+        "questionSource": question_source,
+        "question_source": question_source,
+        "difficultySplit": interview_config.get("difficulty_split") or {},
+        "difficulty_split": interview_config.get("difficulty_split") or {},
+        "selectedQuestionIds": selected_ids,
+        "selected_question_ids": selected_ids,
+        "finalQuestions": configured_questions.get("questions") or [],
+        "final_questions": configured_questions.get("questions") or [],
     }
 
     (INTERVIEW_LINK_DIR / f"{token}.json").write_text(
@@ -194,6 +222,10 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
             "interview_link_generated": True,
             "interview_link_generated_at": datetime.now().isoformat(),
             "interview_status": application.get("interview_status") or "link_created",
+            "questionSource": question_source,
+            "question_source": question_source,
+            "finalQuestions": configured_questions.get("questions") or [],
+            "final_questions": configured_questions.get("questions") or [],
         },
     )
 
@@ -302,6 +334,15 @@ def get_interview_configure_data(application_id: str):
 
     job_id = str(application.get("job_id") or "")
     questions = load_question_bank(job_id)
+    question_bank_count = len(questions)
+    default_question_source = "question_bank" if question_bank_count > 0 else "qwen_generated"
+    print(
+        "[Interview configure-data] "
+        f"candidateId={application_id} jobId={job_id} totalQuestionBankCount={question_bank_count} "
+        f"defaultQuestionSource={default_question_source}"
+    )
+    if question_bank_count == 0:
+        print("[Interview configure-data] auto-switched to Qwen because question bank is empty")
     areas = sorted({
         question.get("area_of_interest") or question.get("areaOfInterest") or question.get("category") or "General"
         for question in questions
@@ -335,6 +376,8 @@ def get_interview_configure_data(application_id: str):
             "interview_link_generated_at": application.get("interview_link_generated_at") or "",
         },
         "questions": questions,
+        "question_bank_count": question_bank_count,
+        "default_question_source": default_question_source,
         "filters": {
             "difficulties": ["easy", "medium", "hard"],
             "areas_of_interest": areas,
@@ -362,12 +405,110 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
             detail="Interview link has already been generated. Use Copy Link from the shortlisted candidates page.",
         )
 
-    requested_count = int(payload.number_of_questions or 0)
+    question_source = _normalize_question_source(payload.questionSource or payload.question_source)
+    requested_count = _parse_positive_question_count(payload.questionCount if question_source == "qwen_generated" else payload.number_of_questions)
 
-    if requested_count <= 0:
+    if requested_count is None and question_source == "qwen_generated":
+        requested_count = _parse_positive_question_count(payload.number_of_questions)
+
+    if requested_count is None and question_source == "question_bank":
+        requested_count = _parse_positive_question_count(payload.questionCount)
+
+    if requested_count is None or requested_count <= 0:
         raise HTTPException(status_code=400, detail="Number of questions must be greater than zero.")
 
-    selected_ids = [str(question_id).strip() for question_id in payload.selected_question_ids if str(question_id).strip()]
+    print(
+        "[Interview configure-questions] "
+        f"questionSource={question_source} questionCount={requested_count} "
+        f"candidateId={application_id} jobId={application.get('job_id')}"
+    )
+
+    if question_source == "qwen_generated":
+        split = _difficulty_split_dict(payload.difficultySplit or payload.difficulty_split)
+        split_total = sum(split.values())
+
+        print("[Interview configure-questions] questionSource=qwen_generated questionCount=", requested_count, "difficultySplit=", split)
+
+        if split_total <= 0:
+            raise HTTPException(status_code=400, detail="At least one Qwen-generated question is required.")
+
+        if split_total != requested_count:
+            raise HTTPException(
+                status_code=400,
+                detail="Difficulty split must add up to the total number of interview questions.",
+            )
+
+        result = generate_qwen_interview_questions(application, split, requested_count)
+
+        if not result.get("success"):
+            bank_empty = len(load_question_bank(str(application.get("job_id") or ""))) == 0
+            message = (
+                "Question bank is empty and Qwen generation failed. Please add questions to the bank or try again."
+                if bank_empty
+                else result.get("message") or "Question generation failed. Please try again or use question bank selection."
+            )
+            raise HTTPException(status_code=503, detail=message)
+
+        generated_questions = [
+            _snapshot_question(question, index)
+            for index, question in enumerate(result.get("questions") or [], start=1)
+        ]
+        configured_at = datetime.now().isoformat()
+        interview_payload = {
+            "success": True,
+            "status": "success",
+            "source": "qwen_generated",
+            "question_source": "qwen_generated",
+            "candidate_name": _get_candidate_name(application),
+            "difficulty_split": split,
+            "questions": generated_questions,
+            "generatedQuestions": generated_questions,
+            "generated_questions": generated_questions,
+            "finalQuestions": generated_questions,
+            "final_questions": generated_questions,
+            "configured_at": configured_at,
+        }
+        interview_config = {
+            "number_of_questions": requested_count,
+            "question_source": "qwen_generated",
+            "difficulty_split": split,
+            "selected_question_ids": [],
+            "filters_used": payload.filters_used.model_dump(),
+            "configured_at": configured_at,
+        }
+
+        update_application(
+            application_id,
+            {
+                "interview_config": interview_config,
+                "interview_questions": interview_payload,
+                "interviewQuestions": generated_questions,
+                "generatedQuestions": generated_questions,
+                "generated_questions": generated_questions,
+                "finalQuestions": generated_questions,
+                "final_questions": generated_questions,
+                "question_source": "qwen_generated",
+                "questionSource": "qwen_generated",
+                "difficultySplit": split,
+                "difficulty_split": split,
+                "total_questions": requested_count,
+            },
+        )
+
+        print(
+            "[Interview configure-questions] Qwen generation completed "
+            f"candidateId={application_id} generatedCount={len(generated_questions)} "
+            f"distribution={_question_difficulty_distribution(generated_questions)}"
+        )
+
+        return {
+            "success": True,
+            "interview_config": interview_config,
+            "interview_questions": interview_payload,
+        }
+
+    raw_selected_ids = payload.selectedQuestionIds or payload.selected_question_ids
+    selected_ids = [str(question_id).strip() for question_id in raw_selected_ids if str(question_id).strip()]
 
     if len(set(selected_ids)) != len(selected_ids):
         raise HTTPException(status_code=400, detail="Selected questions must be unique.")
@@ -404,11 +545,17 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
         "question_bank_id": job_id,
         "question_bank_name": str(application.get("job_role") or application.get("job_title") or "Question Bank"),
         "questions": selected_questions,
+        "selectedQuestionIds": selected_ids,
+        "selected_question_ids": selected_ids,
+        "finalQuestions": selected_questions,
+        "final_questions": selected_questions,
         "configured_at": configured_at,
     }
     interview_config = {
         "number_of_questions": requested_count,
+        "question_source": "question_bank",
         "selected_question_ids": selected_ids,
+        "selectedQuestionIds": selected_ids,
         "filters_used": filters_used,
         "configured_at": configured_at,
     }
@@ -419,8 +566,12 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
             "interview_config": interview_config,
             "interview_questions": interview_payload,
             "interviewQuestions": selected_questions,
+            "finalQuestions": selected_questions,
+            "final_questions": selected_questions,
             "question_source": "question_bank",
             "questionSource": "question_bank",
+            "selectedQuestionIds": selected_ids,
+            "selected_question_ids": selected_ids,
             "question_bank_id": job_id,
             "questionBankId": job_id,
             "question_bank_name": interview_payload["question_bank_name"],
@@ -486,7 +637,7 @@ async def face_verify(application_id: str, frame: UploadFile = File(...)):
                     "match": False,
                     "score": 0.0,
                     "threshold": DEFAULT_FACE_VERIFY_THRESHOLD,
-                    "message": "No reference face available from resume or Aadhaar",
+                    "message": "No reference face available from resume or Indian Government ID",
                     "checked_paths": checked_paths,
                 },
             )
@@ -641,7 +792,7 @@ def start_interview(application_id: str):
         raise HTTPException(status_code=403, detail=access["message"])
 
     if not _is_interview_access_verified(application):
-        raise HTTPException(status_code=403, detail="Aadhaar and face verification are required before interview")
+        raise HTTPException(status_code=403, detail="Indian Government ID and face verification are required before interview")
 
     if _is_interview_completed(application):
         return {
@@ -1331,6 +1482,76 @@ def _get_configured_question_payload(application: dict) -> dict | None:
     return None
 
 
+def _normalize_question_source(value: str) -> str:
+    source = str(value or "question_bank").strip().lower()
+    return "qwen_generated" if source in {"qwen", "qwen_generated", "ai", "ai_generated"} else "question_bank"
+
+
+def _parse_positive_question_count(value) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+
+    text = str(value).strip()
+
+    if not text or not text.isdigit():
+        return None
+
+    return int(text)
+
+
+def _difficulty_split_dict(split: DifficultySplit | dict | None) -> dict:
+    data = split.model_dump() if hasattr(split, "model_dump") else (split if isinstance(split, dict) else {})
+    normalized = {}
+
+    for difficulty in ("easy", "medium", "hard"):
+        value = data.get(difficulty, 0)
+
+        if isinstance(value, bool):
+            raise HTTPException(status_code=400, detail="Difficulty split values must be integers.")
+
+        if isinstance(value, int):
+            count = value
+        elif isinstance(value, float):
+            if not value.is_integer():
+                raise HTTPException(status_code=400, detail="Difficulty split values must be integers.")
+            count = int(value)
+        else:
+            text = str(value or "").strip()
+            if not text:
+                count = 0
+            elif text.isdigit():
+                count = int(text)
+            else:
+                raise HTTPException(status_code=400, detail="Difficulty split values must be integers.")
+
+        if not isinstance(count, int):
+            raise HTTPException(status_code=400, detail="Difficulty split values must be integers.")
+
+        if count < 0:
+            raise HTTPException(status_code=400, detail="Difficulty split values cannot be negative.")
+
+        normalized[difficulty] = count
+
+    return normalized
+
+
+def _question_difficulty_distribution(questions: list[dict]) -> dict:
+    return {
+        difficulty: len([
+            question
+            for question in questions
+            if str(question.get("difficulty") or "").lower() == difficulty
+        ])
+        for difficulty in ("easy", "medium", "hard")
+    }
+
+
 def _snapshot_question(question: dict, index: int) -> dict:
     question_id = str(question.get("_id") or question.get("id") or question.get("question_id") or f"q{index}")
     expected_answer = str(question.get("expected_answer") or question.get("expectedAnswer") or "N/A").strip() or "N/A"
@@ -1343,7 +1564,7 @@ def _snapshot_question(question: dict, index: int) -> dict:
     ).strip() or "General"
 
     return {
-        "id": question_id,
+        "id": f"q{index}",
         "question_id": question_id,
         "question_index": index,
         "question": str(question.get("question") or "").strip(),
@@ -1356,17 +1577,14 @@ def _snapshot_question(question: dict, index: int) -> dict:
         "tags": question.get("tags") if isinstance(question.get("tags"), list) else [],
         "job_role": str(question.get("job_role") or question.get("jobRole") or "").strip(),
         "score_weight": question.get("score_weight") or question.get("scoreWeight") or 1,
+        "source": question.get("source") or question.get("question_source") or "",
     }
 
 
 def _prepare_interview_questions(application_id: str, application: dict) -> dict:
     existing_questions = application.get("interview_questions")
 
-    if (
-        isinstance(existing_questions, dict)
-        and _has_current_question_contract(existing_questions)
-        and existing_questions.get("source") == "question_bank"
-    ):
+    if isinstance(existing_questions, dict) and _has_current_question_contract(existing_questions):
         _log_question_load(application, existing_questions)
         return existing_questions
 
@@ -1755,11 +1973,18 @@ def _is_interview_access_verified(application: dict) -> bool:
 
 
 def _is_aadhaar_verified(application: dict) -> bool:
+    identity = application.get("identityVerification") or application.get("identity_verification") or {}
     return (
         application.get("aadhaarVerified") is True
         or application.get("aadhaar_verified") is True
+        or application.get("governmentIdVerified") is True
+        or application.get("government_id_verified") is True
+        or identity.get("isValidIndianGovId") is True
+        or identity.get("is_valid_indian_gov_id") is True
         or str(application.get("verificationStatus") or "").lower() in {"aadhaar_passed", "verified"}
         or str(application.get("verification_status") or "").lower() in {"aadhaar_passed", "verified"}
+        or str(application.get("verificationStatus") or "").lower() in {"government_id_passed", "identity_passed"}
+        or str(application.get("verification_status") or "").lower() in {"government_id_passed", "identity_passed"}
     )
 
 
@@ -2212,29 +2437,22 @@ def _has_current_question_contract(question_payload: dict) -> bool:
     if not isinstance(questions, list) or not questions:
         return False
 
-    if question_payload.get("source") == "question_bank":
-        return all(isinstance(question, dict) and question.get("question") for question in questions)
-
-    if len(questions) != 5:
-        return False
-
-    difficulty_counts = {"Easy": 0, "Medium": 0, "Hard": 0}
-
     for index, question in enumerate(questions, start=1):
         if not isinstance(question, dict):
             return False
 
-        if question.get("id") != f"q{index}":
+        if not question.get("question"):
             return False
 
-        difficulty = question.get("difficulty")
-
-        if difficulty not in difficulty_counts:
+        if str(question.get("id") or "") != f"q{index}":
             return False
 
-        difficulty_counts[difficulty] += 1
+        difficulty = str(question.get("difficulty") or "").lower()
 
-    return difficulty_counts == {"Easy": 2, "Medium": 2, "Hard": 1}
+        if difficulty not in {"easy", "medium", "hard"}:
+            return False
+
+    return True
 
 
 def _get_candidate_name(application: dict) -> str:

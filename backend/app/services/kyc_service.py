@@ -10,8 +10,10 @@ from app.services.db_service import (
 )
 from app.services.face_match_service import compare_faces
 from app.services.id_model_service import (
+    classify_indian_government_id,
     extract_aadhaar_fields,
     extract_aadhaar_photo,
+    extract_indian_id_fields,
     is_aadhaar_card,
 )
 
@@ -226,6 +228,10 @@ def _safe_update_kyc(application_id: str, verification_result: dict):
 
 
 def verify_aadhaar_for_application(application_id: str, aadhaar_file_path: str) -> dict:
+    return verify_indian_id_for_application(application_id, aadhaar_file_path)
+
+
+def verify_indian_id_for_application(application_id: str, id_file_path: str) -> dict:
     application = get_resume_application(application_id)
 
     if not application:
@@ -240,51 +246,52 @@ def verify_aadhaar_for_application(application_id: str, aadhaar_file_path: str) 
         return {
             "success": False,
             "status_code": 403,
-            "message": "Aadhaar verification is allowed only after ATS pass.",
+            "message": "Indian Government ID verification is allowed only after ATS pass.",
             "data": {},
         }
 
-    print("\n========== KYC START ==========")
+    print("\n========== INDIAN GOVERNMENT ID KYC START ==========")
     print("APPLICATION ID:", application_id)
-    print("AADHAAR FILE:", aadhaar_file_path)
+    print("ID FILE:", id_file_path)
 
-    aadhaar_detection = is_aadhaar_card(aadhaar_file_path)
-    print("AADHAAR DETECTION:", aadhaar_detection)
+    id_detection = classify_indian_government_id(id_file_path)
+    print("GOVERNMENT ID CLASSIFICATION:", id_detection)
 
-    if not aadhaar_detection.get("is_aadhaar"):
-        if not aadhaar_detection.get("success", False):
+    if not id_detection.get("isValidIndianGovId"):
+        if not id_detection.get("success", False):
             return _failure(
-                message=aadhaar_detection.get("message") or "Indian ID validator failed to load.",
+                message=id_detection.get("message") or "Indian ID validator failed to load.",
                 status_code=500,
                 application_id=application_id,
                 application=application,
-                aadhaar_detection=aadhaar_detection,
+                aadhaar_detection=id_detection,
                 next_step="retry",
             )
 
         return _failure(
-            message="No valid Aadhaar detected. Please upload a clear Aadhaar card image or PDF.",
+            message="No valid Indian Government ID detected. Please upload a supported official Indian ID.",
             status_code=400,
             application_id=application_id,
             application=application,
-            aadhaar_detection=aadhaar_detection,
+            aadhaar_detection=id_detection,
             next_step="recapture",
         )
 
-    aadhaar_fields = extract_aadhaar_fields(aadhaar_file_path)
-    print("AADHAAR FIELDS:", aadhaar_fields)
+    document_type = id_detection.get("documentType") or id_detection.get("document_type") or "unknown"
+    id_fields = extract_indian_id_fields(id_file_path, document_type)
+    print("GOVERNMENT ID FIELDS:", id_fields)
 
-    aadhaar_name = _extract_aadhaar_name(aadhaar_fields)
-    print("AADHAAR NAME:", aadhaar_name)
+    id_name = _extract_aadhaar_name(id_fields)
+    print("GOVERNMENT ID NAME:", id_name)
 
-    if not aadhaar_name:
+    if not id_name:
         return _failure(
-            message="Aadhaar was detected, but name could not be extracted. Please upload a clearer Aadhaar image or PDF.",
+            message="Indian Government ID was detected, but name could not be extracted. Please upload a clearer image or PDF.",
             status_code=400,
             application_id=application_id,
             application=application,
-            aadhaar_detection=aadhaar_detection,
-            aadhaar_fields=aadhaar_fields,
+            aadhaar_detection=id_detection,
+            aadhaar_fields=id_fields,
             next_step="recapture",
         )
 
@@ -298,19 +305,19 @@ def verify_aadhaar_for_application(application_id: str, aadhaar_file_path: str) 
             status_code=400,
             application_id=application_id,
             application=application,
-            aadhaar_detection=aadhaar_detection,
-            aadhaar_fields=aadhaar_fields,
+            aadhaar_detection=id_detection,
+            aadhaar_fields=id_fields,
             next_step="stop",
         )
 
-    name_match_score = calculate_name_similarity(resume_name, aadhaar_name)
+    name_match_score = calculate_name_similarity(resume_name, id_name)
     name_match_passed = name_match_score >= NAME_MATCH_THRESHOLD
 
     print("NAME MATCH SCORE:", name_match_score)
     print("NAME MATCH PASSED:", name_match_passed)
 
-    aadhaar_photo = extract_aadhaar_photo(aadhaar_file_path, application_id=application_id)
-    print("AADHAAR PHOTO:", aadhaar_photo)
+    aadhaar_photo = extract_aadhaar_photo(id_file_path, application_id=application_id)
+    print("GOVERNMENT ID PHOTO:", aadhaar_photo)
 
     photo_match = _get_photo_match_result(
         {
@@ -322,21 +329,50 @@ def verify_aadhaar_for_application(application_id: str, aadhaar_file_path: str) 
     )
     print("PHOTO MATCH:", photo_match)
 
-    verification_status = "passed" if name_match_passed else "failed"
+    verification_status = "passed" if id_detection.get("isValidIndianGovId") else "failed"
 
-    masked_aadhaar_number = _get_masked_aadhaar_number(aadhaar_fields)
+    id_number = id_fields.get("idNumber") or id_fields.get("id_number") or _get_masked_aadhaar_number(id_fields)
+    masked_aadhaar_number = _get_masked_aadhaar_number(id_fields)
     aadhaar_photo_path = _get_aadhaar_photo_path(aadhaar_photo)
+
+    identity_verification = {
+        "documentType": document_type,
+        "document_type": document_type,
+        "isValidIndianGovId": True,
+        "is_valid_indian_gov_id": True,
+        "extractedFields": {
+            "name": id_name,
+            "dob": id_fields.get("dob", ""),
+            "idNumber": id_number,
+            "gender": id_fields.get("gender", ""),
+        },
+        "extracted_fields": {
+            "name": id_name,
+            "dob": id_fields.get("dob", ""),
+            "id_number": id_number,
+            "gender": id_fields.get("gender", ""),
+        },
+        "verifiedAt": datetime.now(timezone.utc),
+        "status": "verified",
+        "name_match_score": name_match_score,
+        "name_match_passed": name_match_passed,
+        "photo_match": photo_match,
+    }
 
     verification_result = {
         "verification_status": verification_status,
-        "aadhaar_detected": True,
-        "aadhaar_confidence": aadhaar_detection.get("confidence"),
-        "extracted_name": aadhaar_name,
+        "documentType": document_type,
+        "isValidIndianGovId": True,
+        "aadhaar_detected": document_type == "aadhaar",
+        "aadhaar_confidence": id_detection.get("confidence"),
+        "extracted_name": id_name,
         "masked_aadhaar_number": masked_aadhaar_number,
-        "dob": aadhaar_fields.get("dob", ""),
-        "gender": aadhaar_fields.get("gender", ""),
+        "id_number": id_number,
+        "dob": id_fields.get("dob", ""),
+        "gender": id_fields.get("gender", ""),
         "aadhaar_photo_path": aadhaar_photo_path,
         "aadhaar_face_image_path": aadhaar_photo_path,
+        "identity_photo_path": aadhaar_photo_path,
         "name_match_score": name_match_score,
         "name_match_passed": name_match_passed,
         "photo_match": photo_match,
@@ -347,50 +383,53 @@ def verify_aadhaar_for_application(application_id: str, aadhaar_file_path: str) 
     update_application(
         application_id,
         {
-            "aadhaar_extracted_name": aadhaar_name,
-            "aadhaar_image_path": aadhaar_file_path,
+            "identityVerification": identity_verification,
+            "identity_verification": identity_verification,
+            "government_id_image_path": id_file_path,
+            "government_id_photo_path": aadhaar_photo_path,
+            "documentType": document_type,
+            "aadhaar_extracted_name": id_name,
+            "aadhaar_image_path": id_file_path,
             "aadhaar_photo_path": aadhaar_photo_path,
             "aadhaar_face_image_path": aadhaar_photo_path,
-            "aadhaarVerified": name_match_passed,
-            "aadhaar_verified": name_match_passed,
+            "aadhaarVerified": True,
+            "aadhaar_verified": True,
+            "governmentIdVerified": True,
+            "government_id_verified": True,
             "faceVerified": False,
             "face_verified": False,
-            "verification_status": "aadhaar_passed" if name_match_passed else "aadhaar_failed",
+            "verification_status": "government_id_passed",
             "verification_completed": False,
             "verification_updated_at": datetime.now(timezone.utc),
         },
     )
 
-    if not name_match_passed:
-        return {
-            "success": False,
-            "status_code": 400,
-            "message": "Aadhaar name does not match resume name sufficiently.",
-            "data": {
-                "resume_name": resume_name,
-                "aadhaar_name": aadhaar_name,
-                "name_match_score": name_match_score,
-                "name_match_passed": False,
-                "next_step": "recapture",
-            },
-        }
-
     return {
         "success": True,
         "status_code": 200,
-        "message": "Aadhaar verified successfully",
+        "message": "Indian Government ID verified successfully",
         "data": {
             "application_id": application_id,
+            "documentType": document_type,
+            "document_type": document_type,
+            "isValidIndianGovId": True,
+            "is_valid_indian_gov_id": True,
+            "extractedFields": identity_verification["extractedFields"],
+            "identityVerification": identity_verification,
             "resume_name": resume_name,
-            "aadhaar_name": aadhaar_name,
+            "aadhaar_name": id_name,
+            "government_id_name": id_name,
             "aadhaar_verification_status": "passed",
+            "government_id_verification_status": "passed",
             "name_match_score": name_match_score,
-            "name_match_passed": True,
+            "name_match_passed": name_match_passed,
             "masked_aadhaar_number": masked_aadhaar_number,
+            "id_number": id_number,
             "aadhaar_photo_stored": bool(aadhaar_photo_path),
             "aadhaar_face_image_path": aadhaar_photo_path,
             "photo_match_status": photo_match.get("status"),
             "aadhaarVerified": True,
+            "governmentIdVerified": True,
             "faceVerified": False,
             "next_step": "face_verification",
         },

@@ -9,12 +9,15 @@ function UploadResumesPage({job,onBack})
   const isMountedRef = useRef(true);
   const isUploadingRef = useRef(false);
 
-  const [files,setFiles] =
-    useState([]);
-  const [isUploading, setIsUploading] =
-    useState(false);
-  const [uploadResult, setUploadResult] =
-    useState(null);
+  const [files,setFiles] =useState([]);
+
+  const [isUploading, setIsUploading] = useState(false);
+
+  const [uploadResult, setUploadResult] =useState(null);
+
+  useEffect(() => {
+  console.log("isUploading =", isUploading);
+}, [isUploading]);
 
   useEffect(() => {
     return () => {
@@ -31,13 +34,12 @@ function UploadResumesPage({job,onBack})
     if (!isUploading) {
       return;
     }
-
+  
     const handleBeforeUnload = (event) => {
       event.preventDefault();
       event.returnValue = PROCESSING_LEAVE_MESSAGE;
       return PROCESSING_LEAVE_MESSAGE;
     };
-
     window.addEventListener("beforeunload", handleBeforeUnload);
 
     return () => {
@@ -80,61 +82,57 @@ function UploadResumesPage({job,onBack})
   };
 
   const uploadResumes = async () => {
+    if (!files.length) return;
+
+    const formData = new FormData();
+    formData.append("job_id", job.id);
+
+    files.forEach((file) => {
+      formData.append("resumes", file);
+    });
+
+    setIsUploading(true);
+    isUploadingRef.current = true;
+    setUploadResult(null);
 
     try {
-    const formData =
-        new FormData();
-
-        formData.append(
-        "job_id",
-        job.id
-        );
-
-        files.forEach(file => {
-        formData.append(
-            "resumes",
-            file
-        );
-        });
-
-        setIsUploading(true);
-        setUploadResult(null);
-
-        const response = await fetch(
+      const response = await fetch(
         `${API_BASE_URL}/api/resume/bulk-upload`,
         {
-            method: "POST",
-            body: formData
+          method: "POST",
+          body: formData,
         }
-        );
+      );
 
-        const data = await response.json();
-
-        if (!isMountedRef.current) {
-          return;
-        }
-
-        setUploadResult(data);
-        setFiles([]);
-    } catch (error) {
-        console.error(error);
-        if (!isMountedRef.current) {
-          return;
-        }
-        setUploadResult({
-          count: 0,
-          failed: [
-            {
-              file_name: "Upload",
-              error: "Failed to upload resumes"
-            }
-          ]
-        });
-    } finally {
-      if (isMountedRef.current) {
-        setIsUploading(false);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
+
+      const data = await response.json();
+
+      setUploadResult(data);
+
+      // FIRST stop uploading
+      setIsUploading(false);
       isUploadingRef.current = false;
+
+      // THEN clear files
+      setFiles([]);
+
+      // THEN wait one frame so React updates
+      requestAnimationFrame(() => {
+        alert(
+          `✅ Processing completed successfully!\n\n${data.count} resume(s) processed.`
+        );
+      });
+
+    } catch (err) {
+      console.error(err);
+
+      setIsUploading(false);
+      isUploadingRef.current = false;
+
+      alert("❌ Failed to process resumes.");
     }
   };
 
@@ -205,34 +203,63 @@ function UploadResumesPage({job,onBack})
                 )}
 
         </div>
-
+        
         <button
-          className="process-button"
-          onClick={uploadResumes}
-          disabled={!files.length || isUploading}
-        >
-          {isUploading ? "Processing..." : "Process Resumes"}
-        </button>
+            className="process-button"
+            onClick={uploadResumes}
+            disabled={!files.length || isUploading}>
+
+            {isUploading ? "Processing..." : "Process Resumes"}
+          </button>
 
         {uploadResult && (
-          <div className="selected-files">
-            <strong>
-              Processed {uploadResult.count || 0} resume(s)
-            </strong>
+        <div className="upload-summary">
+
+          <div className="summary-header">
+            <span className="summary-icon">✅</span>
+
+            <div>
+              <h3>Upload Complete</h3>
+              <p>
+                {uploadResult.count || 0} resume(s) processed successfully
+              </p>
+            </div>
+          </div>
+
+          <div className="summary-list">
             {(uploadResult.applications || []).map((item) => (
-              <div key={item.application_id}>
-                {item.candidate_name || item.file_name} - {item.ats_status || item.processing_status}
-                {item.duplicate ? " (duplicate)" : ""}
-                {item.error ? ` - ${item.error}` : ""}
+              <div className="summary-item" key={item.application_id}>
+                <div className="summary-name">
+                  📄 {item.candidate_name || item.file_name}
+                </div>
+
+                <div
+                  className={
+                    item.ats_status === "passed"
+                      ? "status-pass"
+                      : "status-fail"
+                  }
+                >
+                  {item.ats_status === "passed" ? "Passed" : "Failed"}
+                </div>
               </div>
             ))}
+
             {(uploadResult.failed || []).map((item) => (
-              <div key={item.file_name}>
-                {item.file_name} - {item.error}
+              <div className="summary-item" key={item.file_name}>
+                <div className="summary-name">
+                  📄 {item.file_name}
+                </div>
+
+                <div className="status-error">
+                  {item.error}
+                </div>
               </div>
             ))}
           </div>
-        )}
+
+        </div>
+      )}
 
       </div>
 

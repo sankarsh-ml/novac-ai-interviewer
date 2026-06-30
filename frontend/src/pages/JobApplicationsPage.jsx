@@ -3,14 +3,11 @@ import "../styles/JobApplicationsPage.css";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
-function JobApplicationsPage({
-  job,
-  onBack,onViewShortlisted
-}) {
+function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
 
-  const [applications, setApplications] =
-    useState([]);
+  const [applications, setApplications] =useState([]);
 
+  const [shortlistCount, setShortlistCount] = useState("");
   useEffect(() => {
     fetchApplications();
   }, []);
@@ -29,9 +26,8 @@ function JobApplicationsPage({
 
       if (data.success) {
 
-        setApplications(
-          data.applications || []
-        );
+        const sortedApplications = (data.applications || []).sort((a, b) => (b.ats_score ?? 0) - (a.ats_score ?? 0));
+        setApplications(sortedApplications);
       }
       console.log(applications);
     } catch (error) {
@@ -66,6 +62,35 @@ function JobApplicationsPage({
     }
   };
 
+  const updateHRDecision = async (applicationId, decision) => {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/api/hr/applications/${applicationId}/hr-decision`,
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              decision,
+            }),
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          alert(data.detail || data.message || "Failed to update HR decision.");
+          return;
+        }
+
+        fetchApplications();
+      } catch (error) {
+        console.error(error);
+        alert("Failed to update HR decision.");
+      }
+    };
+
   return (
 
   <main className="hr-page">
@@ -82,7 +107,16 @@ function JobApplicationsPage({
       <h1>
         {job.title}
       </h1>
-
+      
+      <div className="shortlist-toolbar">
+      <button
+        className="hr-button"
+        onClick={() => onViewShortlisted(job)}
+      >
+        View Shortlisted Candidates
+      </button>
+      </div>
+      
       <div className="job-summary">
 
         <div className="summary-card">
@@ -93,24 +127,24 @@ function JobApplicationsPage({
         </div>
 
         <div className="summary-card">
-          <span>Passed</span>
+          <span>Selected</span>
           <strong>
             {
               applications.filter(
                 app =>
-                  app.ats_status === "passed"
+                  app.hr_decision === "selected"
               ).length
             }
           </strong>
         </div>
 
         <div className="summary-card">
-          <span>Failed</span>
+          <span>Rejected</span>
           <strong>
             {
               applications.filter(
                 app =>
-                  app.ats_status === "failed"
+                  app.hr_decision === "rejected"
               ).length
             }
           </strong>
@@ -125,6 +159,8 @@ function JobApplicationsPage({
           <thead>
 
             <tr>
+
+              <th>Rank</th>
 
               <th>Candidate</th>
 
@@ -144,6 +180,10 @@ function JobApplicationsPage({
 
               <th>ATS Status</th>
 
+              <th>HR Decision</th>
+
+              <th>Resume</th>
+
               <th>Delete</th>
 
             </tr>
@@ -152,14 +192,17 @@ function JobApplicationsPage({
 
           <tbody>
 
-            {applications.map(
-              (app) => (
-
+            {applications.map((app, index) => (
                 <tr
                   key={
                     app.application_id
                   }
                 >
+                  <td>
+                    <span className="rank-badge">
+                        {index + 1}
+                    </span>
+                  </td>
 
                   <td>
                     {
@@ -220,6 +263,77 @@ function JobApplicationsPage({
                     </span>
 
                   </td>
+                  
+                  <td>
+
+                    <span
+                      className={`status-badge ${
+                        app.hr_decision === "selected"
+                          ? "status-pass"
+                          : app.hr_decision === "rejected"
+                          ? "status-fail"
+                          : "status-processing"
+                      }`}
+                    >
+                      {formatStatus(app.hr_decision || "pending")}
+                    </span>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "6px",
+                        marginTop: "8px",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <button
+                        className="hr-button"
+                        onClick={() =>
+                          updateHRDecision(
+                            app.application_id,
+                            "selected"
+                          )
+                        }
+                      >
+                        Select
+                      </button>
+
+                      <button
+                        className="delete-button"
+                        onClick={() =>
+                          updateHRDecision(
+                            app.application_id,
+                            "rejected"
+                          )
+                        }
+                      >
+                        Reject
+                      </button>
+
+                    </div>
+
+                  </td>
+                  <td>
+                    <div className="resume-actions">
+                      <button
+                        className="resume-button download"
+                        onClick={() =>
+                          window.open(
+                            `${API_BASE_URL}/api/hr/applications/${app.application_id}/resume/download`,
+                            "_blank"
+                          )
+                        }
+                      >
+                        📄 Resume
+                      </button>
+                      <button
+                          className="resume-button view"
+                          onClick={() => onViewResume(app)}
+                      >
+                          View Resume
+                      </button>
+                    </div>
+                  </td>
 
                   <td>
                     <button
@@ -245,16 +359,6 @@ function JobApplicationsPage({
         </table>
 
       </div>
-            <div style={{marginBottom: "20px",marginTop:"20px",textAlign:"centre"}}>
-          <button
-            className="hr-button"
-            onClick={() =>
-              onViewShortlisted(job)
-            }
-          >
-            View Shortlisted Candidates
-          </button>
-        </div>
     </div>
 
   </main>

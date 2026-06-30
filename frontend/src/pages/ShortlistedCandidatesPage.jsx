@@ -34,15 +34,11 @@ function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
 
       if (data.success) {
 
-          const passedCandidates =
-            (data.applications || []).filter(
-              app =>
-                app.ats_status === "passed"
-            );
+          const shortlistedCandidates = (data.applications || [])
+          .filter(app => app.hr_decision === "selected")
+          .sort((a, b) => (b.ats_score ?? 0) - (a.ats_score ?? 0));
 
-          setApplications(
-            passedCandidates
-          );
+        setApplications(shortlistedCandidates);
 
       }
 
@@ -231,6 +227,8 @@ function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
 
               <tr>
 
+                <th>Rank</th>
+
                 <th>
                   Candidate
                 </th>
@@ -257,14 +255,19 @@ function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
 
             <tbody>
 
-              {applications.map(
-                (app) => (
+              {applications.map((app, index) => (
 
                   <tr
                     key={
                       app.application_id
                     }
                   >
+
+                    <td>
+                          <span className="rank-badge">
+                              {index + 1}
+                          </span>
+                      </td>
 
                     <td>
                       {

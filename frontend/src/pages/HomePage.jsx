@@ -9,8 +9,8 @@ function HomePage({ onOpenAdmin }) {
         <h1>AI Resume Screener</h1>
         <p className="subtitle">Upload resumes and prepare them for ATS screening</p>
 
-        <div className="role-grid">
-          <button className="role-card" type="button" onClick={onOpenAdmin}>
+        <div className="role-grid1">
+          <button className="role-card1" type="button" onClick={onOpenAdmin}>
             <span className="role-letter admin">A</span>
             <span>Admin</span>
           </button>

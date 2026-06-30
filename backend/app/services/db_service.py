@@ -10,6 +10,7 @@ from app.services.application_store_service import (
     update_ats_decision,
     update_interview_status,
     update_kyc_verification,
+    delete_job,
 )
 
 

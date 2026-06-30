@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from io import BytesIO
-from fastapi.responses import FileResponse,Response
+from fastapi.responses import Response
 from fastapi import HTTPException
 
 from app.services.candidate_report_service import (
@@ -26,6 +26,8 @@ from app.services.db_service import (
     save_job,
     delete_job,
 )
+from app.services.file_storage_service import read_file_from_mongo, save_file_to_mongo
+from app.services.mongo_service import get_database
 from app.routes.interview_routes import finalize_partial_interview
 
 
@@ -227,6 +229,7 @@ def download_candidate_report(application_id: str):
 
     pdf_bytes = generate_candidate_report_pdf(application)
     filename = report_filename(application)
+    _store_report_pdf(pdf_bytes, filename, application, "candidate_report")
     return _pdf_response(pdf_bytes, filename)
 
 
@@ -250,7 +253,9 @@ def download_candidate_reports(payload: BulkReportRequest):
         )
 
     pdf_bytes = generate_candidate_reports_pdf(applications)
-    return _pdf_response(pdf_bytes, group_report_filename())
+    filename = group_report_filename()
+    _store_report_pdf(pdf_bytes, filename, {"application_id": "", "job_id": payload.job_id}, "bulk_candidate_report")
+    return _pdf_response(pdf_bytes, filename)
 
 
 @router.delete("/applications/{application_id}")
@@ -260,7 +265,7 @@ def remove_application(application_id: str):
 
     return {
         "success": True,
-        "message": "Application and local artifacts deleted",
+        "message": "Application and related MongoDB records deleted",
     }
 
 @router.get("/applications/{application_id}/resume/download")
@@ -273,10 +278,17 @@ def download_application_resume(application_id: str):
             detail="Application not found"
         )
 
-    return FileResponse(
-        path=application["file_path"],
-        media_type="application/pdf",
-        filename=application["file_name"]
+    stored_file = _resume_file_from_application(application)
+
+    if not stored_file:
+        raise HTTPException(status_code=404, detail="Resume file not found")
+
+    return Response(
+        content=stored_file["content"],
+        media_type=stored_file.get("content_type") or "application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{application.get("file_name") or stored_file.get("filename") or "resume.pdf"}"'
+        },
     )
 
 @router.get("/applications/{application_id}/resume/view")
@@ -290,8 +302,12 @@ def view_application_resume(application_id: str):
             detail="Application not found"
         )
 
-    with open(application["file_path"], "rb") as pdf_file:
-        pdf_bytes = pdf_file.read()
+    stored_file = _resume_file_from_application(application)
+
+    if not stored_file:
+        raise HTTPException(status_code=404, detail="Resume file not found")
+
+    pdf_bytes = stored_file["content"]
 
     return Response(
         content=pdf_bytes,
@@ -409,4 +425,46 @@ def _pdf_response(pdf_bytes: bytes, filename: str) -> StreamingResponse:
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
+    )
+
+
+def _resume_file_from_application(application: dict) -> dict | None:
+    file_id = application.get("resumeFileId") or application.get("resume_file_id")
+    file_path = str(application.get("file_path") or "")
+
+    if not file_id and file_path.startswith("gridfs://"):
+        file_id = file_path.replace("gridfs://", "", 1)
+
+    return read_file_from_mongo(file_id) if file_id else None
+
+
+def _store_report_pdf(pdf_bytes: bytes, filename: str, application: dict, report_type: str) -> None:
+    file_id = save_file_to_mongo(
+        pdf_bytes,
+        filename=filename,
+        content_type="application/pdf",
+        metadata={
+            "application_id": application.get("application_id"),
+            "job_id": application.get("job_id") or application.get("jobId"),
+            "report_type": report_type,
+        },
+    )
+    report_id = f"{report_type}:{application.get('application_id') or application.get('job_id') or file_id}"
+    get_database().reports.update_one(
+        {"reportId": report_id},
+        {
+            "$set": {
+                "reportId": report_id,
+                "candidateId": application.get("application_id"),
+                "application_id": application.get("application_id"),
+                "jobId": application.get("job_id") or application.get("jobId"),
+                "job_id": application.get("job_id") or application.get("jobId"),
+                "reportType": report_type,
+                "report_type": report_type,
+                "reportFileId": file_id,
+                "report_file_id": file_id,
+                "metadata": {"filename": filename},
+            }
+        },
+        upsert=True,
     )

@@ -15,6 +15,13 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
   const [interviewDate, setInterviewDate] = useState("");
   const [interviewTime, setInterviewTime] = useState("");
   const [questionCount, setQuestionCount] = useState("");
+  const [questionSource, setQuestionSource] = useState("question_bank");
+  const [questionBankCount, setQuestionBankCount] = useState(0);
+  const [difficultySplit, setDifficultySplit] = useState({
+    easy: "",
+    medium: "",
+    hard: "",
+  });
   const [selectedIds, setSelectedIds] = useState([]);
   const [message, setMessage] = useState("");
   const [generatedLink, setGeneratedLink] = useState("");
@@ -44,12 +51,21 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
       }
 
       setApplication(data.application || {});
-      setQuestions(Array.isArray(data.questions) ? data.questions : []);
+      const loadedQuestions = Array.isArray(data.questions) ? data.questions : [];
+      const totalQuestionBankCount = Number(data.question_bank_count ?? loadedQuestions.length);
+      const configuredSource = normalizeQuestionSource(data.interview_config?.question_source || data.default_question_source);
+      setQuestions(loadedQuestions);
+      setQuestionBankCount(totalQuestionBankCount);
       setInterviewDate(data.application?.interview_date || getDateFromIso(data.application?.interview_scheduled_at) || "");
       setInterviewTime(data.application?.interview_time || getTimeFromIso(data.application?.interview_scheduled_at) || "");
       setQuestionCount(data.interview_config?.number_of_questions || "");
       setSelectedIds(data.interview_config?.selected_question_ids || []);
+      setQuestionSource(totalQuestionBankCount === 0 ? "qwen_generated" : configuredSource);
+      setDifficultySplit(normalizeDifficultySplit(data.interview_config?.difficulty_split));
       setGeneratedLink(data.application?.interview_link || "");
+      if (totalQuestionBankCount === 0) {
+        setMessage("No questions are available in the question bank. Qwen generation has been selected automatically.");
+      }
     } catch (error) {
       setMessage(error.message || "Could not load interview configuration.");
     } finally {
@@ -86,7 +102,13 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
   const selectedQuestions = selectedIds
     .map((id) => questions.find((question) => getQuestionId(question) === id))
     .filter(Boolean);
-  const requiredCount = Number(questionCount || 0);
+  const totalQuestionValidation = validateTotalQuestionCount(questionCount);
+  const hasValidTotalQuestions = !totalQuestionValidation;
+  const requiredCount = hasValidTotalQuestions ? Number(questionCount) : 0;
+  const qwenSplit = getDifficultySplitNumbers(difficultySplit);
+  const qwenSplitTotal = qwenSplit.easy + qwenSplit.medium + qwenSplit.hard;
+  const isQwenMode = questionSource === "qwen_generated";
+  const isQuestionBankMode = questionSource === "question_bank";
   const hasGeneratedLink = Boolean(
     application?.interview_link_generated ||
     application?.interview_link ||
@@ -94,11 +116,12 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
   );
   const selectedExceedsLimit = requiredCount > 0 && selectedIds.length > requiredCount;
   const selectedAtLimit = requiredCount > 0 && selectedIds.length >= requiredCount;
+  const qwenSplitMatchesCount = qwenSplitTotal === requiredCount;
   const canGenerate =
     Boolean(interviewDate) &&
     Boolean(interviewTime) &&
     requiredCount > 0 &&
-    selectedIds.length === requiredCount &&
+    (isQwenMode ? qwenSplitTotal > 0 && qwenSplitMatchesCount : selectedIds.length === requiredCount) &&
     !isInterviewLocked(application) &&
     !hasGeneratedLink;
 
@@ -142,8 +165,17 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
     setMessage("");
   };
 
+  const updateQuestionCount = (value) => {
+    setQuestionCount(value);
+    setMessage("");
+
+    if (questionSource === "qwen_generated" && validateTotalQuestionCount(value) === "") {
+      setDifficultySplit(buildDefaultDifficultySplit(Number(value)));
+    }
+  };
+
   const generateLink = async () => {
-    if (selectedExceedsLimit) {
+    if (isQuestionBankMode && selectedExceedsLimit) {
       setMessage("Selected questions exceed the new limit. Please remove extra questions.");
       return;
     }
@@ -153,7 +185,26 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
       return;
     }
 
+    if (isQwenMode) {
+      if (totalQuestionValidation) {
+        setMessage(totalQuestionValidation);
+        return;
+      }
+
+      const splitValidation = validateDifficultySplit(difficultySplit, requiredCount);
+
+      if (splitValidation) {
+        setMessage(splitValidation);
+        return;
+      }
+    }
+
     if (!canGenerate) {
+      if (isQwenMode) {
+        setMessage("Complete date, time, and Qwen difficulty split before generating.");
+        return;
+      }
+
       setMessage(`Selected ${selectedIds.length} / ${requiredCount}. Complete date, time, and selected questions before generating.`);
       return;
     }
@@ -167,14 +218,23 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          number_of_questions: requiredCount,
-          selected_question_ids: selectedIds,
+          questionSource,
+          questionCount: requiredCount,
+          selectedQuestionIds: isQuestionBankMode ? selectedIds : [],
+          difficultySplit: isQwenMode ? qwenSplit : null,
           filters_used: filters,
         }),
       });
       const configureData = await configureResponse.json();
 
       if (!configureResponse.ok || !configureData.success) {
+        if (configureResponse.status === 503) {
+          const fallbackMessage = questionBankCount === 0
+            ? "Question bank is empty and Qwen generation failed. Please add questions to the bank or try again."
+            : "Qwen question generation failed. Please try again or use question bank selection.";
+          throw new Error(fallbackMessage);
+        }
+
         throw new Error(configureData.detail || configureData.message || "Could not save selected questions.");
       }
 
@@ -234,7 +294,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
             <h1>Configure Interview</h1>
             <p>{application?.candidate_name || "Candidate"} | {application?.email || "No email"} | {application?.job_title || "Job"}</p>
           </div>
-          <strong>Selected {selectedIds.length} / {requiredCount || 0}</strong>
+          <strong>{isQwenMode ? `Qwen ${qwenSplitTotal} / ${requiredCount || 0}` : `Selected ${selectedIds.length} / ${requiredCount || 0}`}</strong>
         </header>
 
         <section className="configure-controls">
@@ -243,18 +303,106 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
           <input
             type="number"
             min="1"
-            placeholder="Number of Questions"
+            placeholder={isQwenMode ? "Total Questions" : "Number of Questions"}
             value={questionCount}
             disabled={hasGeneratedLink}
-            onChange={(event) => {
-              setQuestionCount(event.target.value);
-              setMessage("");
-            }}
+            onChange={(event) => updateQuestionCount(event.target.value)}
           />
         </section>
 
-        {selectedExceedsLimit && <p className="configure-message">Selected questions exceed the new limit. Please remove extra questions.</p>}
-        {!selectedExceedsLimit && selectedAtLimit && !hasGeneratedLink && (
+        <section className="question-source-panel">
+          <span>Question Source:</span>
+          <div className="source-toggle" role="radiogroup" aria-label="Question Source">
+            <label className={isQuestionBankMode ? "active" : ""}>
+              <input
+                type="radio"
+                name="question-source"
+                value="question_bank"
+                checked={isQuestionBankMode}
+                disabled={hasGeneratedLink || questionBankCount === 0}
+                onChange={() => {
+                  setQuestionSource("question_bank");
+                  setMessage("");
+                }}
+              />
+              Select from Question Bank
+            </label>
+            <label className={isQwenMode ? "active" : ""}>
+              <input
+                type="radio"
+                name="question-source"
+                value="qwen_generated"
+                checked={isQwenMode}
+                disabled={hasGeneratedLink}
+                onChange={() => {
+                  setQuestionSource("qwen_generated");
+                  setSelectedIds([]);
+                  if (hasValidTotalQuestions) {
+                    setDifficultySplit(buildDefaultDifficultySplit(requiredCount));
+                  }
+                  setMessage("");
+                }}
+              />
+              Generate with Qwen
+            </label>
+          </div>
+        </section>
+
+        {questionBankCount === 0 && (
+          <p className="configure-message">No questions are available in the question bank. Qwen generation has been selected automatically.</p>
+        )}
+
+        {isQwenMode && (
+          <section className="qwen-panel">
+            <p>Qwen will generate interview questions automatically using the job description, required skills, and candidate resume/project details.</p>
+            {!hasValidTotalQuestions && (
+              <p className="qwen-step-note">Enter a valid Total Questions value to set the Easy, Medium, and Hard split.</p>
+            )}
+            {hasValidTotalQuestions && (
+            <>
+            <div className="qwen-split-grid">
+              <label>
+                Easy Questions
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={difficultySplit.easy}
+                  disabled={hasGeneratedLink}
+                  onChange={(event) => setDifficultySplit({ ...difficultySplit, easy: event.target.value })}
+                />
+              </label>
+              <label>
+                Medium Questions
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={difficultySplit.medium}
+                  disabled={hasGeneratedLink}
+                  onChange={(event) => setDifficultySplit({ ...difficultySplit, medium: event.target.value })}
+                />
+              </label>
+              <label>
+                Hard Questions
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={difficultySplit.hard}
+                  disabled={hasGeneratedLink}
+                  onChange={(event) => setDifficultySplit({ ...difficultySplit, hard: event.target.value })}
+                />
+              </label>
+            </div>
+            <strong>Total Qwen Questions: {qwenSplitTotal}</strong>
+            </>
+            )}
+          </section>
+        )}
+
+        {isQuestionBankMode && selectedExceedsLimit && <p className="configure-message">Selected questions exceed the new limit. Please remove extra questions.</p>}
+        {isQuestionBankMode && !selectedExceedsLimit && selectedAtLimit && !hasGeneratedLink && (
           <p className="configure-message">You have already selected the required number of questions. Remove one to add another.</p>
         )}
         {hasGeneratedLink && <p className="configure-message">Interview link has already been generated. Selected questions and schedule are locked.</p>}
@@ -262,6 +410,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
         {generatedLink && <p className="generated-link">{generatedLink}</p>}
 
         <section className="configure-layout">
+          {isQuestionBankMode && (
           <div className="question-browser">
             <div className="configure-filters">
               <input
@@ -318,10 +467,20 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
               {!filteredQuestions.length && <p>Not enough questions found for the selected filters. Please change filters or reduce question count.</p>}
             </div>
           </div>
+          )}
 
           <aside className="selected-cart">
-            <h2>Selected Questions</h2>
-            <p>Selected {selectedIds.length} / {requiredCount || 0}</p>
+            <h2>{isQwenMode ? "Qwen Questions" : "Selected Questions"}</h2>
+            <p>{isQwenMode ? `Difficulty split ${qwenSplitTotal} / ${requiredCount || 0}` : `Selected ${selectedIds.length} / ${requiredCount || 0}`}</p>
+            {isQwenMode && (
+              <div className="qwen-summary">
+                <span>Easy: {qwenSplit.easy}</span>
+                <span>Medium: {qwenSplit.medium}</span>
+                <span>Hard: {qwenSplit.hard}</span>
+              </div>
+            )}
+            {isQuestionBankMode && (
+            <>
             {selectedQuestions.map((question, index) => (
               <article className="selected-cart-item" key={getQuestionId(question)}>
                 <span>{index + 1}</span>
@@ -333,6 +492,8 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
               </article>
             ))}
             {!selectedQuestions.length && <p>No questions selected.</p>}
+            </>
+            )}
             {isInterviewLocked(application) && <p className="configure-message">This interview is already closed for link generation.</p>}
             <button className="generate-link-button" type="button" disabled={!canGenerate || submitting} onClick={generateLink}>
               {submitting ? "Generating..." : "Generate Interview Link"}
@@ -438,4 +599,129 @@ function balancedDifficultyPlan(count) {
   }
 
   return plan;
+}
+
+
+function normalizeQuestionSource(value) {
+  return String(value || "question_bank").toLowerCase() === "qwen_generated" ? "qwen_generated" : "question_bank";
+}
+
+
+function normalizeDifficultySplit(value) {
+  const split = value && typeof value === "object" ? value : {};
+
+  return {
+    easy: split.easy ?? "",
+    medium: split.medium ?? "",
+    hard: split.hard ?? "",
+  };
+}
+
+
+function buildDefaultDifficultySplit(total) {
+  const count = Number(total);
+
+  if (count === 1) {
+    return { easy: 1, medium: 0, hard: 0 };
+  }
+
+  if (count === 2) {
+    return { easy: 1, medium: 1, hard: 0 };
+  }
+
+  if (count === 3) {
+    return { easy: 1, medium: 1, hard: 1 };
+  }
+
+  if (count === 4) {
+    return { easy: 1, medium: 2, hard: 1 };
+  }
+
+  if (count === 5) {
+    return { easy: 2, medium: 2, hard: 1 };
+  }
+
+  const hard = Math.max(1, Math.round(count * 0.2));
+  const remaining = count - hard;
+  const easy = Math.floor(remaining / 2);
+  const medium = count - hard - easy;
+
+  return { easy, medium, hard };
+}
+
+
+function getDifficultySplitNumbers(split) {
+  return {
+    easy: parseWholeNumber(split.easy),
+    medium: parseWholeNumber(split.medium),
+    hard: parseWholeNumber(split.hard),
+  };
+}
+
+
+function validateTotalQuestionCount(value) {
+  const text = String(value ?? "").trim();
+
+  if (!text) {
+    return "Total Questions must be a positive integer.";
+  }
+
+  if (!/^\d+$/.test(text)) {
+    return "Total Questions must be a positive integer.";
+  }
+
+  if (Number(text) <= 0) {
+    return "Total Questions must be a positive integer.";
+  }
+
+  return "";
+}
+
+
+function parseWholeNumber(value) {
+  const text = String(value ?? "").trim();
+
+  if (!text) {
+    return 0;
+  }
+
+  if (!/^\d+$/.test(text)) {
+    return Number.NaN;
+  }
+
+  return Number(text);
+}
+
+
+function validateDifficultySplit(split, totalQuestionCount) {
+  const values = [split.easy, split.medium, split.hard];
+
+  if (values.some((value) => {
+    const text = String(value ?? "").trim();
+    return text && !/^\d+$/.test(text);
+  })) {
+    return "Difficulty split values must be whole numbers.";
+  }
+
+  const counts = getDifficultySplitNumbers(split);
+
+  if ([counts.easy, counts.medium, counts.hard].some((value) => !Number.isInteger(value) || value < 0)) {
+    return "Difficulty split values must be whole numbers.";
+  }
+
+  const total = counts.easy + counts.medium + counts.hard;
+
+  if (total <= 0) {
+    return "At least one question must be generated.";
+  }
+
+  if (totalQuestionCount > 0 && total > totalQuestionCount) {
+    return "Difficulty split exceeds the maximum allowed question count.";
+  }
+
+  if (total !== totalQuestionCount) {
+    return "Difficulty split must add up to the total number of interview questions.";
+  }
+
+  return "";
 }

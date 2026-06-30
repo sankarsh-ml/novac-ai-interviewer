@@ -141,6 +141,23 @@
   white-space: nowrap;
 }
 
+.hr-button {
+  align-self: flex-start;
+  border: 0;
+  border-radius: 8px;
+  background: #1f6fe5;
+  color: #ffffff;
+  padding: 14px 24px;
+  font-size: 1rem;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hr-button:hover {
+  opacity: 0.95;
+}
+
 .link-button,
 .delete-button {
   border: none;
@@ -160,9 +177,12 @@
   background: #b91c1c;
 }
 
-.link-button:disabled {
+.link-button:disabled,
+.delete-button:disabled,
+.hr-button:disabled {
   background: #94a3b8;
   cursor: not-allowed;
+  opacity: 0.75;
 }
 
 .candidate-details-panel {
@@ -287,9 +307,9 @@ h1 {
 
 .shortlist-toolbar{
     display:flex;
-    justify-content:space-between;
-    align-items:flex-end;
-    gap:30px;
+    justify-content:flex-start;
+    align-items:center;
+    gap:12px;
     margin:30px 0;
     flex-wrap:wrap;
 }
@@ -327,7 +347,34 @@ h1 {
 }
 
 .shortlist-toolbar .hr-button{
-    min-width:260px;
+    min-width:auto;
+}
+
+.shortlist-toolbar .hr-button:first-child{
+    min-width:240px;
+}
+
+.quick-select-button{
+    background:#2563eb;
+}
+
+.delete-records-button{
+    min-height:48px;
+    padding:14px 22px;
+}
+
+.decision-actions{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    justify-content:center;
+    margin-top:8px;
+}
+
+.table-action-button{
+    min-width:78px;
+    padding:9px 12px;
+    font-size:0.88rem;
 }
 
 .resume-button{
@@ -348,13 +395,15 @@ h1 {
 
 .resume-actions{
     display:flex;
-    flex-direction:column;
-    gap:10px;
-    min-width:120px;
+    flex-wrap:wrap;
+    justify-content:center;
+    gap:8px;
+    min-width:150px;
 }
 
 .resume-button{
-    width:100%;
+    width:auto;
+    min-width:118px;
     padding:10px 12px;
     border:none;
     border-radius:8px;
@@ -375,14 +424,94 @@ h1 {
     transform:translateY(-2px);
 }
 
+.modal-backdrop{
+    position:fixed;
+    inset:0;
+    z-index:1000;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:20px;
+    background:rgba(15,23,42,.45);
+}
+
+.quick-select-modal{
+    width:min(420px,100%);
+    border:1px solid #d9e2ef;
+    border-radius:8px;
+    background:#fff;
+    padding:24px;
+    box-shadow:0 24px 60px rgba(15,23,42,.22);
+}
+
+.quick-select-modal h2{
+    margin:0 0 16px;
+    color:#111827;
+}
+
+.quick-select-modal label{
+    display:block;
+    margin-bottom:8px;
+    color:#1e293b;
+    font-weight:800;
+}
+
+.quick-select-modal input{
+    width:100%;
+    border:1px solid #cbd5e1;
+    border-radius:8px;
+    padding:12px 14px;
+    font-size:1rem;
+}
+
+.quick-select-modal input:focus{
+    border-color:#2563eb;
+    box-shadow:0 0 0 4px rgba(37,99,235,.15);
+    outline:none;
+}
+
+.form-error{
+    margin:10px 0 0;
+    color:#b91c1c;
+    font-weight:800;
+}
+
+.modal-actions{
+    display:flex;
+    flex-wrap:wrap;
+    justify-content:flex-end;
+    gap:10px;
+    margin-top:18px;
+}
+
 @media (max-width: 900px) {
   .details-grid,
   .details-grid.compact {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .job-summary {
+    flex-wrap: wrap;
+  }
+
+  .summary-card {
+    min-width: 220px;
+  }
 }
 
 @media (max-width: 560px) {
+  .hr-container {
+    width: 100%;
+    padding: 20px 12px;
+  }
+
+  .shortlist-toolbar .hr-button,
+  .shortlist-toolbar .hr-button:first-child,
+  .delete-records-button {
+    width: 100%;
+    min-width: 0;
+  }
+
   .candidate-details-header {
     flex-direction: column;
   }

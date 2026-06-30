@@ -1258,12 +1258,21 @@ function normalizeInterviewQuestions(value) {
 
 
 function isCandidateAadhaarVerified(candidate) {
+  const identity = candidate?.identityVerification || candidate?.identity_verification || {};
   return (
     candidate?.aadhaarVerified === true ||
     candidate?.aadhaar_verified === true ||
+    candidate?.governmentIdVerified === true ||
+    candidate?.government_id_verified === true ||
+    identity?.isValidIndianGovId === true ||
+    identity?.is_valid_indian_gov_id === true ||
     String(candidate?.verificationStatus || "").toLowerCase() === "aadhaar_passed" ||
+    String(candidate?.verificationStatus || "").toLowerCase() === "government_id_passed" ||
+    String(candidate?.verificationStatus || "").toLowerCase() === "identity_passed" ||
     String(candidate?.verificationStatus || "").toLowerCase() === "verified" ||
     String(candidate?.verification_status || "").toLowerCase() === "aadhaar_passed" ||
+    String(candidate?.verification_status || "").toLowerCase() === "government_id_passed" ||
+    String(candidate?.verification_status || "").toLowerCase() === "identity_passed" ||
     String(candidate?.verification_status || "").toLowerCase() === "verified"
   );
 }

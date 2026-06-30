@@ -241,7 +241,9 @@ function App() {
             ...(currentSummary || {}),
             aadhaarVerified: true,
             aadhaar_verified: true,
-            verification_status: "aadhaar_passed",
+            governmentIdVerified: true,
+            government_id_verified: true,
+            verification_status: "government_id_passed",
           }));
           if (applicationSummary?.application_id) {
             window.history.replaceState(
@@ -268,6 +270,8 @@ function App() {
             ...(summary || {}),
             aadhaarVerified: true,
             aadhaar_verified: true,
+            governmentIdVerified: true,
+            government_id_verified: true,
             faceVerified: true,
             face_verified: true,
             verification_completed: true,
@@ -460,11 +464,20 @@ export default App;
 
 
 function isAadhaarVerified(data) {
+  const identity = data?.identityVerification || data?.identity_verification || {};
   return (
     data?.aadhaarVerified === true ||
     data?.aadhaar_verified === true ||
+    data?.governmentIdVerified === true ||
+    data?.government_id_verified === true ||
+    identity?.isValidIndianGovId === true ||
+    identity?.is_valid_indian_gov_id === true ||
     String(data?.verification_status || "").toLowerCase() === "aadhaar_passed" ||
+    String(data?.verification_status || "").toLowerCase() === "government_id_passed" ||
+    String(data?.verification_status || "").toLowerCase() === "identity_passed" ||
     String(data?.verificationStatus || "").toLowerCase() === "aadhaar_passed" ||
+    String(data?.verificationStatus || "").toLowerCase() === "government_id_passed" ||
+    String(data?.verificationStatus || "").toLowerCase() === "identity_passed" ||
     String(data?.verificationStatus || "").toLowerCase() === "verified" ||
     String(data?.verification_status || "").toLowerCase() === "verified"
   );

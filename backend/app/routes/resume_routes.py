@@ -8,6 +8,7 @@ import uuid
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.routes.ats_routes import score_resume
+from app.services.file_storage_service import save_file_to_mongo, save_path_to_mongo
 from app.services.db_service import get_application_by_id, list_applications, save_resume_application
 from app.services.resume_parser import (
     clean_text,
@@ -71,6 +72,7 @@ async def _process_resume_upload(file: UploadFile, application_id: str | None = 
         "file_name": original_file_name,
         "saved_file_name": saved_file_name,
         "file_path": str(saved_file_path),
+        "file_content": file_content,
         "file_type": "pdf",
         "resume_file_hash": file_hash,
         "processing_status": "processed",
@@ -189,20 +191,23 @@ async def extract_resume_text(file: UploadFile = File(...)):
     resume_data = await _process_resume_upload(file)
     resume = resume_data["resume"]
 
-    return {
-        "success": True,
-        "message": "Resume text extracted successfully",
-        "data": {
-            "file_name": resume_data["file_name"],
-            "saved_file_name": resume_data["saved_file_name"],
-            "file_type": resume_data["file_type"],
-            "total_pages": resume["total_pages"],
-            "text_length": resume["text_length"],
-            "word_count": resume["word_count"],
-            "extracted_text": resume["extracted_text"],
-            "ats_ready_data": resume["ats_ready_data"],
-        },
-    }
+    try:
+        return {
+            "success": True,
+            "message": "Resume text extracted successfully",
+            "data": {
+                "file_name": resume_data["file_name"],
+                "saved_file_name": resume_data["saved_file_name"],
+                "file_type": resume_data["file_type"],
+                "total_pages": resume["total_pages"],
+                "text_length": resume["text_length"],
+                "word_count": resume["word_count"],
+                "extracted_text": resume["extracted_text"],
+                "ats_ready_data": resume["ats_ready_data"],
+            },
+        }
+    finally:
+        _cleanup_resume_processing_files(resume_data)
 
 
 def _default_aadhaar_verification():
@@ -244,18 +249,39 @@ async def _save_resume_application_for_file(upload_file: UploadFile, job_id: str
 
         return _application_result(duplicate_application, duplicate=True)
 
+    resume_file_id = save_file_to_mongo(
+        resume_data.pop("file_content"),
+        filename=resume_data["file_name"],
+        content_type="application/pdf",
+        metadata={"application_id": application_id, "job_id": job_id, "file_type": "resume"},
+    )
+    resume_photo_file_id = ""
+    resume_photo_path = resume_summary.get("resume_photo_path")
+
+    if resume_photo_path and Path(resume_photo_path).exists():
+        resume_photo_file_id = save_path_to_mongo(
+            resume_photo_path,
+            content_type="image/jpeg",
+            metadata={"application_id": application_id, "job_id": job_id, "file_type": "resume_face"},
+        )
+
     saved_application_id = save_resume_application(
         {
             **resume_data,
             "application_id": application_id,
             "job_id": job_id,
+            "resumeFileId": resume_file_id,
+            "resume_file_id": resume_file_id,
+            "file_path": f"gridfs://{resume_file_id}",
             "ats_ready_data": resume_summary["ats_ready_data"],
             "candidate_name": resume_summary["candidate_name"],
             "email": resume_summary["email"],
-            "resume_photo_path": resume_summary["resume_photo_path"],
-            "resume_face_image_path": resume_summary["resume_face_image_path"],
-            "candidate_image_path": resume_summary["resume_photo_path"],
-            "candidate_folder": str(CANDIDATE_STORAGE_DIR / application_id),
+            "resumePhotoFileId": resume_photo_file_id,
+            "resume_photo_file_id": resume_photo_file_id,
+            "resume_photo_path": f"gridfs://{resume_photo_file_id}" if resume_photo_file_id else "",
+            "resume_face_image_path": f"gridfs://{resume_photo_file_id}" if resume_photo_file_id else "",
+            "candidate_image_path": f"gridfs://{resume_photo_file_id}" if resume_photo_file_id else "",
+            "candidate_folder": "",
             "ats_status": "pending",
             "verification_status": "not_started",
             "verification_completed": False,
@@ -274,8 +300,21 @@ async def _save_resume_application_for_file(upload_file: UploadFile, job_id: str
         }
     )
 
+    shutil.rmtree(CANDIDATE_STORAGE_DIR / application_id, ignore_errors=True)
     application = get_application_by_id(saved_application_id) or {}
     return _application_result(application, duplicate=False)
+
+
+def _cleanup_resume_processing_files(resume_data: dict) -> None:
+    file_path = resume_data.get("file_path")
+    resume = resume_data.get("resume") if isinstance(resume_data.get("resume"), dict) else {}
+    photo_path = resume.get("resume_photo_path")
+
+    if file_path:
+        Path(file_path).unlink(missing_ok=True)
+
+    if photo_path:
+        Path(photo_path).unlink(missing_ok=True)
 
 
 def _find_duplicate_application(file_hash: str, job_id: str | None) -> dict | None:

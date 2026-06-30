@@ -2,42 +2,40 @@ import csv
 import json
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
-
-APP_DIR = Path(__file__).resolve().parents[1]
-QUESTION_BANK_DIR = APP_DIR / "storage" / "question_banks"
-
-QUESTION_BANK_DIR.mkdir(parents=True, exist_ok=True)
+from app.services.mongo_service import get_database, make_json_safe, mongo_now, public_document
 
 
 def save_question_bank(job_id, questions):
     normalized_questions = normalize_question_bank_questions(questions, job_id=str(job_id or ""))
+    db = get_database()
+    db.question_bank.delete_many({"$or": [{"job_id": str(job_id or "")}, {"jobId": str(job_id or "")}]})
 
-    file_path = QUESTION_BANK_DIR / f"{job_id}.json"
-
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "job_id": job_id,
-                "questions": normalized_questions,
-            },
-            f,
-            indent=4,
+    if normalized_questions:
+        db.question_bank.insert_many(
+            [
+                {
+                    **make_json_safe(question),
+                    "questionId": question.get("question_id") or question.get("id") or question.get("_id"),
+                    "jobId": str(job_id or ""),
+                    "job_id": str(job_id or ""),
+                    "createdAt": question.get("createdAt") or question.get("created_at") or mongo_now(),
+                    "updatedAt": mongo_now(),
+                }
+                for question in normalized_questions
+            ]
         )
+
+    print(f"[Storage] Saved question bank to MongoDB jobId={job_id} count={len(normalized_questions)}")
 
 
 def load_question_bank(job_id):
-    file_path = QUESTION_BANK_DIR / f"{job_id}.json"
-
-    if not file_path.exists():
-        return []
-
-    with open(file_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    return normalize_question_bank_questions(data.get("questions", []), job_id=str(job_id or ""))
+    documents = get_database().question_bank.find(
+        {"$or": [{"job_id": str(job_id or "")}, {"jobId": str(job_id or "")}]}
+    ).sort("created_at", 1)
+    questions = [public_document(document) for document in documents]
+    return normalize_question_bank_questions([question for question in questions if question], job_id=str(job_id or ""))
 
 
 def normalize_question_bank_questions(questions: Any, job_id: str = "") -> list[dict]:

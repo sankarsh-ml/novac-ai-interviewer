@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { uploadAadhaar } from "../api/kycApi.js";
+import { uploadIndianGovernmentId } from "../api/kycApi.js";
 import "../styles/AadhaarUploadPage.css";
 
 
@@ -17,7 +17,7 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
     return (
       <main className="aadhaar-page">
         <section className="aadhaar-panel">
-          <h1>Aadhaar Verification</h1>
+          <h1>Indian Government ID Verification</h1>
           <p className="aadhaar-message">No resume application is available.</p>
           <button className="aadhaar-home-button" type="button" onClick={onBackHome}>
             Back Home
@@ -40,7 +40,7 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
     const fileName = selectedFile.name.toLowerCase();
     if (!ALLOWED_EXTENSIONS.some((extension) => fileName.endsWith(extension))) {
       setFile(null);
-      setError("Please choose a JPG, PNG, or PDF Aadhaar file.");
+      setError("Please choose a JPG, PNG, or PDF Indian Government ID file.");
       return;
     }
 
@@ -49,7 +49,7 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
 
   const handleUpload = async () => {
     if (!file) {
-      setError("Please select an Aadhaar image or PDF.");
+      setError("Please select an Indian Government ID image or PDF.");
       return;
     }
 
@@ -58,10 +58,10 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
     setVerification(null);
 
     try {
-      const response = await uploadAadhaar(applicationSummary.application_id, file);
+      const response = await uploadIndianGovernmentId(applicationSummary.application_id, file);
       setVerification(response.data);
     } catch (apiError) {
-      setError(apiError.message || "Aadhaar verification failed.");
+      setError(apiError.message || "Government ID verification failed.");
     } finally {
       setLoading(false);
     }
@@ -76,13 +76,13 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
 
         <header className="aadhaar-header">
           <p className="eyebrow">Identity Check</p>
-          <h1>Aadhaar Verification</h1>
-          <p>Please upload a clear Aadhaar card image or PDF for identity verification.</p>
+          <h1>Indian Government ID Verification</h1>
+          <p>Please upload a clear official Indian government ID image or PDF for identity verification.</p>
         </header>
 
         <section className="aadhaar-upload-box">
           <label className="aadhaar-file-label" htmlFor="aadhaar-file">
-            <span>{file ? file.name : "Select Aadhaar image or PDF"}</span>
+            <span>{file ? file.name : "Select Indian Government ID image or PDF"}</span>
             <input
               id="aadhaar-file"
               type="file"
@@ -92,7 +92,7 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
           </label>
 
           <button className="aadhaar-upload-button" type="button" onClick={handleUpload} disabled={!file || loading}>
-            {loading ? "Verifying Aadhaar..." : "Upload Aadhaar"}
+            {loading ? "Verifying Government ID..." : "Upload Indian Government ID"}
           </button>
         </section>
 
@@ -100,19 +100,20 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
 
         {verification && (
           <section className="aadhaar-result">
-            <h2>Aadhaar verification status: {formatStatus(verification.aadhaar_verification_status)}</h2>
+            <h2>Government ID verification status: {formatStatus(verification.government_id_verification_status || verification.aadhaar_verification_status)}</h2>
             <div className="aadhaar-result-grid">
               <ResultItem label="Resume name" value={verification.resume_name} />
-              <ResultItem label="Aadhaar name" value={verification.aadhaar_name} />
+              <ResultItem label="Document type" value={formatStatus(verification.documentType || verification.document_type)} />
+              <ResultItem label="Government ID name" value={verification.government_id_name || verification.aadhaar_name} />
               <ResultItem label="Name match score" value={verification.name_match_score} />
               <ResultItem label="Photo stored" value={verification.aadhaar_photo_stored ? "Yes" : "No"} />
               <ResultItem label="Photo match" value={formatStatus(verification.photo_match_status)} />
-              <ResultItem label="Masked Aadhaar" value={verification.masked_aadhaar_number || "Not available"} />
+              <ResultItem label="Document ID / ID Number" value={verification.id_number || verification.masked_aadhaar_number || verification.extractedFields?.idNumber || "Not available"} />
             </div>
             <button
               className="aadhaar-upload-button continue-button"
               type="button"
-              onClick={() => onVerified({ ...verification, aadhaarVerified: true })}
+              onClick={() => onVerified({ ...verification, aadhaarVerified: true, governmentIdVerified: true })}
             >
               Continue to Face Verification
             </button>

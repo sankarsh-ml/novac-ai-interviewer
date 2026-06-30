@@ -6,8 +6,11 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000
 function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
 
   const [applications, setApplications] =useState([]);
-
-  const [shortlistCount, setShortlistCount] = useState("");
+  const [quickSelectOpen, setQuickSelectOpen] = useState(false);
+  const [quickSelectCount, setQuickSelectCount] = useState("");
+  const [quickSelectError, setQuickSelectError] = useState("");
+  const [isQuickSelecting, setIsQuickSelecting] = useState(false);
+  const [isDeletingRecords, setIsDeletingRecords] = useState(false);
   useEffect(() => {
     fetchApplications();
   }, []);
@@ -26,14 +29,17 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
 
       if (data.success) {
 
-        const sortedApplications = (data.applications || []).sort((a, b) => (b.ats_score ?? 0) - (a.ats_score ?? 0));
+        const sortedApplications = sortApplications(data.applications || []);
         setApplications(sortedApplications);
+        return sortedApplications;
       }
       console.log(applications);
     } catch (error) {
 
       console.error(error);
     }
+
+    return [];
   };
 
   const deleteApplication = async (applicationId) => {
@@ -91,6 +97,100 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
       }
     };
 
+  const quickSelectCandidates = async (event) => {
+    event.preventDefault();
+
+    const count = Number(quickSelectCount);
+
+    if (!quickSelectCount.trim() || !Number.isInteger(count) || count <= 0) {
+      setQuickSelectError("Enter a valid number greater than zero.");
+      return;
+    }
+
+    setQuickSelectError("");
+    setIsQuickSelecting(true);
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/hr/jobs/${encodeURIComponent(job.id)}/quick-select`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ count }),
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        setQuickSelectError(data.detail || data.message || "Failed to quick select candidates.");
+        return;
+      }
+
+      if ((data.selected_count || 0) <= 0) {
+        setQuickSelectError(data.message || "No new candidates were selected.");
+        return;
+      }
+
+      const updatedApplications = data.candidates || data.applications || [];
+
+      if (updatedApplications.length) {
+        setApplications(sortApplications(updatedApplications));
+      } else {
+        await fetchApplications();
+      }
+
+      setQuickSelectOpen(false);
+      setQuickSelectCount("");
+      setQuickSelectError("");
+      setIsQuickSelecting(false);
+      window.setTimeout(() => {
+        alert(data.message || quickSelectSuccessMessage(data.selected_count || 0));
+      }, 0);
+    } catch (error) {
+      console.error(error);
+      setQuickSelectError("Failed to quick select candidates.");
+    } finally {
+      setIsQuickSelecting(false);
+    }
+  };
+
+  const deleteAllRecords = async () => {
+    const confirmed = window.confirm(
+      "This will permanently delete all candidate records, resume files, interview links, interview answers, reports, and processing folders for this job. Are you sure?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsDeletingRecords(true);
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/hr/jobs/${encodeURIComponent(job.id)}/records`,
+        {
+          method: "DELETE",
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        alert(data.detail || data.message || "Failed to delete records.");
+        return;
+      }
+
+      setApplications([]);
+      alert(data.message || "All records deleted successfully.");
+    } catch (error) {
+      console.error(error);
+      alert("Failed to delete records.");
+    } finally {
+      setIsDeletingRecords(false);
+    }
+  };
+
   return (
 
   <main className="hr-page">
@@ -109,12 +209,32 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
       </h1>
       
       <div className="shortlist-toolbar">
-      <button
-        className="hr-button"
-        onClick={() => onViewShortlisted(job)}
-      >
-        View Shortlisted Candidates
-      </button>
+        <button
+          className="hr-button"
+          onClick={() => onViewShortlisted(job)}
+        >
+          View Shortlisted Candidates
+        </button>
+
+        <button
+          className="hr-button quick-select-button"
+          type="button"
+          onClick={() => {
+            setQuickSelectError("");
+            setQuickSelectOpen(true);
+          }}
+        >
+          Quick Select
+        </button>
+
+        <button
+          className="delete-button delete-records-button"
+          type="button"
+          onClick={deleteAllRecords}
+          disabled={isDeletingRecords || applications.length === 0}
+        >
+          {isDeletingRecords ? "Deleting..." : "Delete All Records"}
+        </button>
       </div>
       
       <div className="job-summary">
@@ -132,7 +252,7 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
             {
               applications.filter(
                 app =>
-                  app.hr_decision === "selected"
+                  isHrDecision(app, "selected")
               ).length
             }
           </strong>
@@ -144,7 +264,7 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
             {
               applications.filter(
                 app =>
-                  app.hr_decision === "rejected"
+                  isHrDecision(app, "rejected")
               ).length
             }
           </strong>
@@ -268,9 +388,9 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
 
                     <span
                       className={`status-badge ${
-                        app.hr_decision === "selected"
+                        isHrDecision(app, "selected")
                           ? "status-pass"
-                          : app.hr_decision === "rejected"
+                          : isHrDecision(app, "rejected")
                           ? "status-fail"
                           : "status-processing"
                       }`}
@@ -278,16 +398,9 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
                       {formatStatus(app.hr_decision || "pending")}
                     </span>
 
-                    <div
-                      style={{
-                        display: "flex",
-                        gap: "6px",
-                        marginTop: "8px",
-                        justifyContent: "center",
-                      }}
-                    >
+                    <div className="decision-actions">
                       <button
-                        className="hr-button"
+                        className="hr-button table-action-button"
                         onClick={() =>
                           updateHRDecision(
                             app.application_id,
@@ -299,7 +412,7 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
                       </button>
 
                       <button
-                        className="delete-button"
+                        className="delete-button table-action-button"
                         onClick={() =>
                           updateHRDecision(
                             app.application_id,
@@ -324,7 +437,7 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
                           )
                         }
                       >
-                        📄 Resume
+                        Resume
                       </button>
                       <button
                           className="resume-button view"
@@ -359,6 +472,45 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
         </table>
 
       </div>
+
+      {quickSelectOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <form className="quick-select-modal" onSubmit={quickSelectCandidates}>
+            <h2>Quick Select</h2>
+            <label htmlFor="quick-select-count">How many candidates do you want to select?</label>
+            <input
+              id="quick-select-count"
+              type="number"
+              min="1"
+              step="1"
+              value={quickSelectCount}
+              onChange={(event) => {
+                setQuickSelectCount(event.target.value);
+                setQuickSelectError("");
+              }}
+              autoFocus
+            />
+            {quickSelectError && <p className="form-error">{quickSelectError}</p>}
+            <div className="modal-actions">
+              <button
+                className="link-button"
+                type="button"
+                onClick={() => {
+                  setQuickSelectOpen(false);
+                  setQuickSelectCount("");
+                  setQuickSelectError("");
+                }}
+                disabled={isQuickSelecting}
+              >
+                Cancel
+              </button>
+              <button className="hr-button" type="submit" disabled={isQuickSelecting}>
+                {isQuickSelecting ? "Selecting..." : "Select Candidates"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
 
   </main>
@@ -367,6 +519,33 @@ function JobApplicationsPage({job,onBack,onViewShortlisted,onViewResume}) {
 }
 
 export default JobApplicationsPage;
+
+
+function sortApplications(applications) {
+  return [...applications].sort((a, b) => getRankScore(b) - getRankScore(a));
+}
+
+
+function getRankScore(application) {
+  const value = application?.ats_score ?? application?.ats_result?.ats_score ?? 0;
+  const score = Number(value);
+
+  return Number.isFinite(score) ? score : 0;
+}
+
+
+function isHrDecision(application, decision) {
+  return String(application?.hr_decision || "").toLowerCase().trim() === decision;
+}
+
+
+function quickSelectSuccessMessage(selectedCount) {
+  if (selectedCount <= 0) {
+    return "No new candidates were selected.";
+  }
+
+  return `Selected ${selectedCount} ${selectedCount === 1 ? "candidate" : "candidates"} successfully.`;
+}
 
 
 function CandidateDetailsPanel({ application, onClose }) {

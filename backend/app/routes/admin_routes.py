@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.services.admin_auth_service import authenticate
@@ -20,7 +21,10 @@ def login(request: LoginRequest):
             "message": "Login successful"
         }
 
-    return {
-        "success": False,
-        "message": "Invalid username or password"
-    }
+    return JSONResponse(
+        status_code=401,
+        content={
+            "success": False,
+            "message": "Invalid username or password",
+        },
+    )

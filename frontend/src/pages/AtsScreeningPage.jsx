@@ -122,7 +122,7 @@ function AtsScreeningPage({ applicationSummary, onBackHome, onPassed }) {
         <div className="decision-actions">
           {passed ? (
             <button className="decision-button passed" type="button" onClick={onPassed}>
-              Continue to Aadhaar
+              Continue to Government ID Verification
             </button>
           ) : (
             <button className="decision-button failed" type="button" onClick={onBackHome}>

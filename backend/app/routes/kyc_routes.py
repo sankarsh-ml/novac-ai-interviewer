@@ -1,4 +1,5 @@
 import os
+import shutil
 import traceback
 import uuid
 from pathlib import Path
@@ -9,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.services.db_service import get_resume_application, update_application
+from app.services.file_storage_service import save_file_to_mongo, save_path_to_mongo
 from app.services.kyc_service import verify_indian_id_for_application
 
 
@@ -142,6 +144,8 @@ def mark_candidate_verified(application_id: str, payload: MarkVerifiedRequest):
 @router.post("/identity/upload/{application_id}")
 @router.post("/aadhaar/upload/{application_id}")
 async def upload_indian_government_id(application_id: str, aadhaar_file: UploadFile = File(...)):
+    candidate_dir = None
+
     try:
         if not application_id:
             raise HTTPException(status_code=400, detail="Application ID is missing.")
@@ -183,6 +187,13 @@ async def upload_indian_government_id(application_id: str, aadhaar_file: UploadF
             application_id=application_id,
             id_file_path=str(id_file_path),
         )
+        file_id = save_file_to_mongo(
+            file_bytes,
+            filename=Path(original_filename).name or safe_filename,
+            content_type=aadhaar_file.content_type or "application/octet-stream",
+            metadata={"application_id": application_id, "file_type": "government_id"},
+        )
+        _attach_identity_gridfs_files(application_id, result, file_id)
 
         status_code = result.get("status_code", 200)
 
@@ -221,6 +232,9 @@ async def upload_indian_government_id(application_id: str, aadhaar_file: UploadF
             },
             status_code=500,
         )
+    finally:
+        if candidate_dir:
+            shutil.rmtree(candidate_dir, ignore_errors=True)
 
 
 def _candidate_verification_payload(application: dict) -> dict:
@@ -261,6 +275,60 @@ def _candidate_verification_payload(application: dict) -> dict:
         "interview_status": application.get("interview_status", "not_started"),
         "interview_completed": application.get("interview_completed") is True,
     }
+
+
+def _attach_identity_gridfs_files(application_id: str, result: dict, document_file_id: str) -> None:
+    data = result.get("data") if isinstance(result, dict) else {}
+    data = data if isinstance(data, dict) else {}
+    identity = data.get("identityVerification") if isinstance(data.get("identityVerification"), dict) else {}
+    photo_path = (
+        data.get("aadhaar_face_image_path")
+        or identity.get("aadhaar_face_image_path")
+        or identity.get("aadhaar_photo_path")
+        or identity.get("identity_photo_path")
+    )
+    photo_file_id = ""
+
+    if photo_path and Path(str(photo_path)).exists():
+        photo_file_id = save_path_to_mongo(
+            photo_path,
+            content_type="image/jpeg",
+            metadata={"application_id": application_id, "file_type": "government_id_face"},
+        )
+        Path(str(photo_path)).unlink(missing_ok=True)
+
+    gridfs_document_path = f"gridfs://{document_file_id}"
+    gridfs_photo_path = f"gridfs://{photo_file_id}" if photo_file_id else ""
+    updates = {
+        "governmentIdFileId": document_file_id,
+        "government_id_file_id": document_file_id,
+        "government_id_image_path": gridfs_document_path,
+        "aadhaar_image_path": gridfs_document_path,
+    }
+
+    if photo_file_id:
+        updates.update(
+            {
+                "governmentIdPhotoFileId": photo_file_id,
+                "government_id_photo_file_id": photo_file_id,
+                "government_id_photo_path": gridfs_photo_path,
+                "aadhaar_photo_path": gridfs_photo_path,
+                "aadhaar_face_image_path": gridfs_photo_path,
+            }
+        )
+        data["aadhaar_face_image_path"] = gridfs_photo_path
+        data["aadhaar_photo_stored"] = True
+        identity["photoFileId"] = photo_file_id
+        identity["aadhaar_photo_path"] = gridfs_photo_path
+        identity["aadhaar_face_image_path"] = gridfs_photo_path
+
+    identity["documentFileId"] = document_file_id
+    identity["document_file_id"] = document_file_id
+    data["identityVerification"] = identity
+    data["documentFileId"] = document_file_id
+    updates["identityVerification"] = identity
+    updates["identity_verification"] = identity
+    update_application(application_id, updates)
 
 
 def _is_verification_completed(application: dict) -> bool:

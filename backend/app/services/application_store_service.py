@@ -1,192 +1,154 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
-from pathlib import Path
-import shutil
-import threading
 import uuid
 
-
-APP_DIR = Path(__file__).resolve().parents[1]
-STORAGE_DIR = APP_DIR / "storage"
-APPLICATIONS_FILE = STORAGE_DIR / "applications.json"
-JOBS_FILE = STORAGE_DIR / "jobs.json"
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-UPLOADS_DIR = PROJECT_ROOT / "backend" / "uploads"
-
-_STORE_LOCK = threading.Lock()
+from app.services.file_storage_service import delete_file_from_mongo
+from app.services.mongo_service import get_database, make_json_safe, mongo_now, public_document
 
 
 def create_application(data: dict) -> str:
-    now = _now()
-
-    application = {
-        "application_id": data.get("application_id") or str(uuid.uuid4()),
-        **_json_safe(data),
-
-        # NEW
+    now = mongo_now()
+    application_id = str(data.get("application_id") or data.get("candidateId") or uuid.uuid4())
+    document = {
+        **make_json_safe(data),
+        "application_id": application_id,
+        "candidateId": application_id,
+        "candidate_id": application_id,
+        "jobId": data.get("jobId") or data.get("job_id"),
+        "job_id": data.get("job_id") or data.get("jobId"),
         "hr_decision": data.get("hr_decision", "pending"),
-
         "created_at": data.get("created_at") or now,
-        "updated_at": data.get("updated_at") or now,
+        "createdAt": data.get("createdAt") or now,
+        "updated_at": now,
+        "updatedAt": now,
     }
 
-    with _STORE_LOCK:
-        applications = _load_json(APPLICATIONS_FILE)
-        applications.append(application)
-        _save_json(APPLICATIONS_FILE, applications)
+    get_database().candidates.insert_one(document)
+    print(f"[Storage] Saved candidate to MongoDB candidateId={application_id}")
+    return application_id
 
-    return application["application_id"]
 
 def get_application_by_id(application_id: str) -> dict | None:
     if not application_id:
         return None
 
-    for application in list_applications():
-        if _matches_application_id(application, application_id):
-            return application
-
-    return None
+    document = get_database().candidates.find_one(_application_filter(application_id))
+    return public_document(document)
 
 
 def update_application(application_id: str, updates: dict) -> bool:
     if not application_id:
         return False
 
-    with _STORE_LOCK:
-        applications = _load_json(APPLICATIONS_FILE)
+    now = mongo_now()
+    safe_updates = {
+        **make_json_safe(updates),
+        "updated_at": now,
+        "updatedAt": now,
+    }
 
-        for index, application in enumerate(applications):
-            if _matches_application_id(application, application_id):
-                updated_application = {
-                    **application,
-                    **_json_safe(updates),
-                    "updated_at": _now(),
-                }
-                applications[index] = updated_application
-                _save_json(APPLICATIONS_FILE, applications)
-                return True
+    result = get_database().candidates.update_one(
+        _application_filter(application_id),
+        {"$set": safe_updates},
+    )
 
-    return False
+    if result.matched_count:
+        _mirror_related_records(application_id, safe_updates)
+
+    if result.modified_count:
+        print(f"[Storage] Saved candidate to MongoDB candidateId={application_id}")
+
+    return result.matched_count > 0
 
 
 def delete_application(application_id: str) -> bool:
     if not application_id:
         return False
 
-    with _STORE_LOCK:
-        applications = _load_json(APPLICATIONS_FILE)
+    db = get_database()
+    application = db.candidates.find_one(_application_filter(application_id))
 
-        for index, application in enumerate(applications):
-            if _matches_application_id(application, application_id):
-                removed_application = applications.pop(index)
-                _delete_application_artifacts(removed_application)
-                _save_json(APPLICATIONS_FILE, applications)
-                return True
+    if not application:
+        return False
 
-    return False
+    _delete_related_gridfs_files(application)
+    _delete_gridfs_files_for_filters(_candidate_or_filters(application_id))
+    db.candidates.delete_one(_application_filter(application_id))
+    db.interviews.delete_many({"$or": _candidate_or_filters(application_id)})
+    db.interview_answers.delete_many({"$or": _candidate_or_filters(application_id)})
+    db.identity_verifications.delete_many({"$or": _candidate_or_filters(application_id)})
+    db.reports.delete_many({"$or": _candidate_or_filters(application_id)})
+    print(f"[Storage] Deleted related records for candidateId={application_id}")
+    return True
 
 
 def quick_select_job_applications(job_id: str, count: int) -> dict:
     if not job_id or count <= 0:
+        return _quick_select_result(False, 0, 0, 0, [])
+
+    db = get_database()
+    applications = [public_document(item) for item in db.candidates.find(_job_filter(job_id))]
+    applications = [item for item in applications if item]
+    ranked_applications = sorted(applications, key=_application_rank_key, reverse=True)
+    available = [item for item in ranked_applications if _is_available_for_quick_select(item)]
+
+    if count > len(available):
         return {
-            "success": False,
-            "selected_count": 0,
-            "updated_count": 0,
-            "available_count": 0,
-            "applications": [],
+            **_quick_select_result(False, 0, 0, len(available), ranked_applications),
+            "message": f"Only {len(available)} candidate(s) available to select. Requested {count}.",
         }
 
-    with _STORE_LOCK:
-        applications = _load_json(APPLICATIONS_FILE)
-        matching_indexes = [
-            index
-            for index, application in enumerate(applications)
-            if str(application.get("job_id") or "") == str(job_id)
-        ]
-        ranked_indexes = sorted(
-            matching_indexes,
-            key=lambda index: _application_rank_key(applications[index]),
-            reverse=True,
+    selected_ids = [item["application_id"] for item in available[:count]]
+    now = mongo_now()
+
+    if selected_ids:
+        db.candidates.update_many(
+            {"application_id": {"$in": selected_ids}},
+            {"$set": {"hr_decision": "selected", "updated_at": now, "updatedAt": now}},
         )
-        available_indexes = [
-            index
-            for index in ranked_indexes
-            if _is_available_for_quick_select(applications[index])
-        ]
-        available_count = len(available_indexes)
 
-        if count > available_count:
-            updated_applications = [
-                application
-                for application in applications
-                if str(application.get("job_id") or "") == str(job_id)
-            ]
-            return {
-                "success": False,
-                "selected_count": 0,
-                "updated_count": 0,
-                "available_count": available_count,
-                "applications": sorted(updated_applications, key=_application_rank_key, reverse=True),
-                "message": f"Only {available_count} candidate(s) available to select. Requested {count}.",
-            }
-
-        selected_indexes = available_indexes[:count]
-        now = _now()
-
-        for index in selected_indexes:
-            applications[index] = {
-                **applications[index],
-                "hr_decision": "selected",
-                "updated_at": now,
-            }
-
-        _save_json(APPLICATIONS_FILE, applications)
-        updated_applications = [
-            application
-            for application in applications
-            if str(application.get("job_id") or "") == str(job_id)
-        ]
-
-    return {
-        "success": True,
-        "selected_count": len(selected_indexes),
-        "updated_count": len(selected_indexes),
-        "available_count": available_count,
-        "applications": sorted(updated_applications, key=_application_rank_key, reverse=True),
-    }
+    updated = [public_document(item) for item in db.candidates.find(_job_filter(job_id))]
+    updated = sorted([item for item in updated if item], key=_application_rank_key, reverse=True)
+    return _quick_select_result(True, len(selected_ids), len(selected_ids), len(available), updated)
 
 
 def delete_job_records(job_id: str) -> int:
     if not job_id:
         return 0
 
-    with _STORE_LOCK:
-        applications = _load_json(APPLICATIONS_FILE)
-        removed_applications = [
-            application
-            for application in applications
-            if str(application.get("job_id") or "") == str(job_id)
-        ]
+    db = get_database()
+    applications = [public_document(item) for item in db.candidates.find(_job_filter(job_id))]
 
-        for application in removed_applications:
-            _delete_application_artifacts(application)
+    for application in applications:
+        if application:
+            _delete_related_gridfs_files(application)
 
-        remaining_applications = [
-            application
-            for application in applications
-            if str(application.get("job_id") or "") != str(job_id)
-        ]
+    candidate_ids = [item.get("application_id") for item in applications if item and item.get("application_id")]
+    related_filters = [_job_filter(job_id)]
 
-        _save_json(APPLICATIONS_FILE, remaining_applications)
+    for candidate_id in candidate_ids:
+        related_filters.extend(_candidate_or_filters(candidate_id))
 
-    return len(removed_applications)
+    _delete_gridfs_files_for_filters(related_filters)
+    db.candidates.delete_many(_job_filter(job_id))
+    db.interviews.delete_many(_job_filter(job_id))
+    db.interview_answers.delete_many(_job_filter(job_id))
+    db.identity_verifications.delete_many(_job_filter(job_id))
+    db.reports.delete_many(_job_filter(job_id))
+
+    if candidate_ids:
+        for collection_name in ("interviews", "interview_answers", "identity_verifications", "reports"):
+            db[collection_name].delete_many({"candidateId": {"$in": candidate_ids}})
+            db[collection_name].delete_many({"application_id": {"$in": candidate_ids}})
+
+    print(f"[Storage] Deleted all job records jobId={job_id}")
+    return len(applications)
 
 
 def list_applications() -> list[dict]:
-    with _STORE_LOCK:
-        return _load_json(APPLICATIONS_FILE)
+    documents = get_database().candidates.find({}).sort("created_at", -1)
+    return [item for item in (public_document(document) for document in documents) if item]
 
 
 def update_ats_decision(application_id: str, decision: str) -> bool:
@@ -201,9 +163,34 @@ def update_ats_decision(application_id: str, decision: str) -> bool:
 
 
 def update_kyc_verification(application_id: str, data: dict) -> bool:
+    db = get_database()
+    application = get_application_by_id(application_id) or {}
+    now = mongo_now()
+    verification_id = str(data.get("verificationId") or data.get("verification_id") or uuid.uuid4())
+    document = {
+        **make_json_safe(data),
+        "verificationId": verification_id,
+        "verification_id": verification_id,
+        "candidateId": application_id,
+        "application_id": application_id,
+        "jobId": application.get("jobId") or application.get("job_id"),
+        "job_id": application.get("job_id") or application.get("jobId"),
+        "createdAt": data.get("createdAt") or now,
+        "created_at": data.get("created_at") or now,
+        "updatedAt": now,
+        "updated_at": now,
+    }
+    db.identity_verifications.update_one(
+        {"candidateId": application_id},
+        {"$set": document},
+        upsert=True,
+    )
+
     updates = {
         "aadhaar_verification": data,
         "kyc_verification": data,
+        "identityVerification": data.get("identityVerification") or data.get("identity_verification") or data,
+        "identity_verification": data.get("identityVerification") or data.get("identity_verification") or data,
     }
 
     aadhaar_photo_path = data.get("aadhaar_photo_path") if isinstance(data, dict) else None
@@ -223,233 +210,100 @@ def update_interview_status(application_id: str, data: dict) -> bool:
 
 
 def save_job(job_data: dict) -> str:
-    job = {
-        "id": job_data.get("id") or str(uuid.uuid4()),
-        **_json_safe(job_data),
+    now = mongo_now()
+    job_id = str(job_data.get("id") or job_data.get("jobId") or uuid.uuid4())
+    document = {
+        **make_json_safe(job_data),
+        "id": job_id,
+        "jobId": job_id,
+        "job_id": job_id,
+        "requiredSkills": job_data.get("requiredSkills") or job_data.get("required_skills") or [],
+        "required_skills": job_data.get("required_skills") or job_data.get("requiredSkills") or [],
+        "createdAt": job_data.get("createdAt") or now,
+        "created_at": job_data.get("created_at") or now,
+        "updatedAt": now,
+        "updated_at": now,
+        "status": job_data.get("status") or "active",
     }
-
-    with _STORE_LOCK:
-        jobs = _load_json(JOBS_FILE)
-        jobs.append(job)
-        _save_json(JOBS_FILE, jobs)
-
-    return job["id"]
+    get_database().jobs.insert_one(document)
+    print(f"[Storage] Saved job to MongoDB jobId={job_id}")
+    return job_id
 
 
 def get_all_jobs() -> list[dict]:
-    with _STORE_LOCK:
-        return _load_json(JOBS_FILE)
+    documents = get_database().jobs.find({}).sort("created_at", -1)
+    return [item for item in (public_document(document) for document in documents) if item]
 
 
 def get_job_by_id(job_id: str) -> dict | None:
     if not job_id:
         return None
 
-    for job in get_all_jobs():
-        if str(job.get("id")) == str(job_id):
-            return job
+    document = get_database().jobs.find_one(_job_identity_filter(job_id))
+    return public_document(document)
 
-    return None
 
 def delete_job(job_id: str) -> bool:
     if not job_id:
         return False
 
-    with _STORE_LOCK:
-        jobs = _load_json(JOBS_FILE)
-        applications = _load_json(APPLICATIONS_FILE)
+    db = get_database()
+    job = db.jobs.find_one(_job_identity_filter(job_id))
 
-        # Find the job
-        job_exists = any(
-            str(job.get("id")) == str(job_id)
-            for job in jobs
-        )
+    if not job:
+        return False
 
-        if not job_exists:
-            return False
-
-        # Delete every application's files
-        for application in list(applications):
-            if str(application.get("job_id")) == str(job_id):
-                _delete_application_artifacts(application)
-
-        # Remove applications from applications.json
-        applications = [
-            application
-            for application in applications
-            if str(application.get("job_id")) != str(job_id)
-        ]
-
-        # Remove job from jobs.json
-        jobs = [
-            job
-            for job in jobs
-            if str(job.get("id")) != str(job_id)
-        ]
-
-        _save_json(APPLICATIONS_FILE, applications)
-        _save_json(JOBS_FILE, jobs)
-
+    delete_job_records(job_id)
+    db.jobs.delete_one(_job_identity_filter(job_id))
     return True
 
 
-def _ensure_store_files():
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-
-    for folder_name in (
-        "resumes",
-        "aadhaar",
-        "aadhaar_photos",
-        "resume_photos",
-        "live_frames",
-    ):
-        (STORAGE_DIR / folder_name).mkdir(parents=True, exist_ok=True)
-
-    for file_path in (APPLICATIONS_FILE, JOBS_FILE):
-        if not file_path.exists():
-            _save_json(file_path, [])
+def _application_filter(application_id: str) -> dict:
+    return {
+        "$or": [
+            {"application_id": str(application_id)},
+            {"candidateId": str(application_id)},
+            {"candidate_id": str(application_id)},
+        ]
+    }
 
 
-def _load_json(file_path: Path) -> list[dict]:
-    _ensure_store_files_without_recursing()
-
-    if not file_path.exists():
-        return []
-
-    try:
-        with file_path.open("r", encoding="utf-8") as file:
-            data = json.load(file)
-    except json.JSONDecodeError:
-        return []
-
-    return data if isinstance(data, list) else []
+def _candidate_or_filters(application_id: str) -> list[dict]:
+    return [
+        {"application_id": str(application_id)},
+        {"candidateId": str(application_id)},
+        {"candidate_id": str(application_id)},
+    ]
 
 
-def _save_json(file_path: Path, data: list[dict]) -> None:
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with file_path.open("w", encoding="utf-8") as file:
-        json.dump(_json_safe(data), file, indent=2)
-
-
-def _ensure_store_files_without_recursing():
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-
-    for folder_name in (
-        "resumes",
-        "aadhaar",
-        "aadhaar_photos",
-        "resume_photos",
-        "live_frames",
-    ):
-        (STORAGE_DIR / folder_name).mkdir(parents=True, exist_ok=True)
-
-    for file_path in (APPLICATIONS_FILE, JOBS_FILE):
-        if not file_path.exists():
-            file_path.write_text("[]\n", encoding="utf-8")
+def _job_filter(job_id: str) -> dict:
+    return {
+        "$or": [
+            {"job_id": str(job_id)},
+            {"jobId": str(job_id)},
+            {"id": str(job_id)},
+        ]
+    }
 
 
-def _delete_application_artifacts(application: dict) -> None:
-    for key in (
-        "file_path",
-        "resume_photo_path",
-        "aadhaar_photo_path",
-        "processed_folder",
-        "processed_dir",
-        "upload_folder",
-        "upload_dir",
-        "candidate_folder",
-        "resume_face_image_path",
-        "candidate_image_path",
-        "aadhaar_face_image_path",
-    ):
-        _delete_path_if_owned(application.get(key))
-
-    _delete_path_if_owned(_safe_get(application, ["resume", "resume_photo_path"]))
-    _delete_path_if_owned(_safe_get(application, ["resume", "photo_path"]))
-
-    application_id = str(application.get("application_id") or "")
-    if application_id:
-        _delete_path_if_owned(STORAGE_DIR / "candidates" / application_id)
-
-        for folder in (
-            STORAGE_DIR / "aadhaar",
-            STORAGE_DIR / "aadhaar_photos",
-            STORAGE_DIR / "interview_links",
-            STORAGE_DIR / "interview_audio",
-            STORAGE_DIR / "live_frames",
-            STORAGE_DIR / "reports",
-            STORAGE_DIR / "resumes",
-            STORAGE_DIR / "resume_photos",
-            STORAGE_DIR / "text",
-            STORAGE_DIR / "transcripts",
-            UPLOADS_DIR / "audio_answers",
-            UPLOADS_DIR / "reports",
-            UPLOADS_DIR / "transcripts",
-        ):
-            if folder.exists():
-                for child in folder.glob(f"{application_id}*"):
-                    _delete_path_if_owned(child)
-
-        for link_file in (STORAGE_DIR / "interview_links").glob("*.json"):
-            try:
-                data = json.loads(link_file.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-
-            if str(data.get("application_id") or "") == application_id:
-                _delete_path_if_owned(link_file)
+def _job_identity_filter(job_id: str) -> dict:
+    return {
+        "$or": [
+            {"id": str(job_id)},
+            {"jobId": str(job_id)},
+            {"job_id": str(job_id)},
+        ]
+    }
 
 
-def _delete_path_if_owned(path_value) -> None:
-    if not path_value:
-        return
-
-    candidate = Path(str(path_value)).expanduser()
-    candidates = [candidate]
-
-    if not candidate.is_absolute():
-        candidates.extend([PROJECT_ROOT / candidate, APP_DIR / candidate])
-
-    for path in candidates:
-        try:
-            resolved = path.resolve()
-        except Exception:
-            continue
-
-        if not _is_owned_artifact_path(resolved) or not resolved.exists():
-            continue
-
-        if resolved.is_dir():
-            shutil.rmtree(resolved)
-        else:
-            resolved.unlink()
-        return
-
-
-def _is_owned_artifact_path(path: Path) -> bool:
-    owned_roots = [STORAGE_DIR.resolve()]
-
-    if UPLOADS_DIR.exists():
-        owned_roots.append(UPLOADS_DIR.resolve())
-
-    return any(path == root or root in path.parents for root in owned_roots)
-
-
-def _safe_get(mapping: dict, keys: list[str]):
-    current = mapping
-
-    for key in keys:
-        if not isinstance(current, dict):
-            return None
-
-        current = current.get(key)
-
-    return current
-
-
-def _matches_application_id(application: dict, application_id: str) -> bool:
-    return str(application.get("application_id") or application.get("_id") or "") == str(application_id)
+def _quick_select_result(success: bool, selected_count: int, updated_count: int, available_count: int, applications: list[dict]) -> dict:
+    return {
+        "success": success,
+        "selected_count": selected_count,
+        "updated_count": updated_count,
+        "available_count": available_count,
+        "applications": applications,
+    }
 
 
 def _is_available_for_quick_select(application: dict) -> bool:
@@ -472,19 +326,170 @@ def _application_rank_key(application: dict) -> float:
     return 0.0
 
 
-def _json_safe(value):
-    return json.loads(json.dumps(value, default=_json_default))
+def _delete_related_gridfs_files(document: dict) -> None:
+    for key in (
+        "resumeFileId",
+        "resume_file_id",
+        "resumePhotoFileId",
+        "resume_photo_file_id",
+        "governmentIdFileId",
+        "government_id_file_id",
+        "governmentIdPhotoFileId",
+        "government_id_photo_file_id",
+        "reportFileId",
+        "report_file_id",
+        "documentFileId",
+        "document_file_id",
+        "photoFileId",
+        "photo_file_id",
+    ):
+        delete_file_from_mongo(document.get(key))
 
 
-def _json_default(value):
-    if isinstance(value, datetime):
-        return value.isoformat()
+def _delete_gridfs_files_for_filters(filters: list[dict]) -> None:
+    db = get_database()
 
-    return str(value)
+    for collection_name in ("interviews", "interview_answers", "identity_verifications", "reports"):
+        for document in db[collection_name].find({"$or": filters} if len(filters) > 1 else filters[0]):
+            _delete_related_gridfs_files(public_document(document) or {})
+
+
+def _mirror_related_records(application_id: str, updates: dict) -> None:
+    db = get_database()
+    application = get_application_by_id(application_id) or {}
+    job_id = application.get("jobId") or application.get("job_id")
+    now = mongo_now()
+
+    if any(
+        key in updates
+        for key in (
+            "interview_config",
+            "interview_questions",
+            "interviewQuestions",
+            "interview_token",
+            "interview_link",
+            "finalQuestions",
+            "generatedQuestions",
+            "question_source",
+            "questionSource",
+            "interview_status",
+        )
+    ):
+        interview_id = str(application.get("interview_token") or application.get("interviewId") or application_id)
+        config = application.get("interview_config") if isinstance(application.get("interview_config"), dict) else {}
+        question_payload = application.get("interview_questions") if isinstance(application.get("interview_questions"), dict) else {}
+        final_questions = (
+            application.get("finalQuestions")
+            or application.get("final_questions")
+            or question_payload.get("questions")
+            or []
+        )
+        db.interviews.update_one(
+            {"candidateId": application_id},
+            {
+                "$set": {
+                    "interviewId": interview_id,
+                    "candidateId": application_id,
+                    "application_id": application_id,
+                    "jobId": job_id,
+                    "job_id": job_id,
+                    "interviewLinkToken": application.get("interview_token"),
+                    "token": application.get("interview_token"),
+                    "questionSource": application.get("questionSource") or application.get("question_source") or config.get("question_source"),
+                    "question_source": application.get("question_source") or application.get("questionSource") or config.get("question_source"),
+                    "selectedQuestionIds": application.get("selectedQuestionIds") or config.get("selected_question_ids") or [],
+                    "selected_question_ids": application.get("selected_question_ids") or config.get("selected_question_ids") or [],
+                    "generatedQuestions": application.get("generatedQuestions") or question_payload.get("generatedQuestions") or [],
+                    "generated_questions": application.get("generated_questions") or question_payload.get("generated_questions") or [],
+                    "difficultySplit": application.get("difficultySplit") or config.get("difficulty_split") or {},
+                    "difficulty_split": application.get("difficulty_split") or config.get("difficulty_split") or {},
+                    "questionCount": application.get("total_questions") or config.get("number_of_questions"),
+                    "question_count": application.get("total_questions") or config.get("number_of_questions"),
+                    "finalQuestions": final_questions,
+                    "final_questions": final_questions,
+                    "status": _interview_collection_status(application),
+                    "startedAt": application.get("interview_started_at"),
+                    "completedAt": application.get("interview_completed_at") or application.get("completedAt"),
+                    "updatedAt": now,
+                },
+                "$setOnInsert": {"createdAt": now},
+            },
+            upsert=True,
+        )
+        print(f"[Storage] Saved interview to MongoDB interviewId={interview_id}")
+
+    if "interview_answers" in updates and isinstance(application.get("interview_answers"), dict):
+        interview_id = str(application.get("interview_token") or application.get("interviewId") or application_id)
+
+        for question_id, answer in application["interview_answers"].items():
+            if not isinstance(answer, dict):
+                continue
+
+            question_index = answer.get("question_index") or answer.get("questionIndex") or 0
+            answer_id = f"{interview_id}:{question_id}"
+            db.interview_answers.update_one(
+                {"answerId": answer_id},
+                {
+                    "$set": {
+                        **make_json_safe(answer),
+                        "answerId": answer_id,
+                        "answer_id": answer_id,
+                        "interviewId": interview_id,
+                        "candidateId": application_id,
+                        "application_id": application_id,
+                        "jobId": job_id,
+                        "job_id": job_id,
+                        "questionIndex": question_index,
+                        "question_index": question_index,
+                        "question": answer.get("question"),
+                        "expectedAnswer": answer.get("expectedAnswer") or answer.get("expected_answer"),
+                        "candidateAnswer": answer.get("candidate_answer") or answer.get("answerText") or answer.get("answer_text"),
+                        "evaluation": answer.get("evaluation") or answer.get("feedback"),
+                        "score": answer.get("score") or answer.get("finalScore") or answer.get("final_score"),
+                        "answeredAt": answer.get("submittedAt") or answer.get("submitted_at"),
+                        "updatedAt": now,
+                    },
+                    "$setOnInsert": {"createdAt": now},
+                },
+                upsert=True,
+            )
+            print(f"[Storage] Saved answer to MongoDB interviewId={interview_id} questionIndex={question_index}")
+
+    identity = updates.get("identityVerification") or updates.get("identity_verification")
+
+    if isinstance(identity, dict):
+        db.identity_verifications.update_one(
+            {"candidateId": application_id},
+            {
+                "$set": {
+                    **make_json_safe(identity),
+                    "candidateId": application_id,
+                    "application_id": application_id,
+                    "jobId": job_id,
+                    "job_id": job_id,
+                    "updatedAt": now,
+                    "updated_at": now,
+                },
+                "$setOnInsert": {"createdAt": now, "created_at": now},
+            },
+            upsert=True,
+        )
+
+
+def _interview_collection_status(application: dict) -> str:
+    status = str(application.get("interview_status") or application.get("interviewStatus") or "").lower()
+
+    if status in {"completed"}:
+        return "completed"
+
+    if status in {"partial", "quit", "interrupted"}:
+        return "abandoned"
+
+    if status in {"in_progress", "started"}:
+        return "started"
+
+    return "configured"
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-_ensure_store_files()

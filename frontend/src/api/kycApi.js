@@ -1,23 +1,23 @@
 const API_BASE_URL = "http://127.0.0.1:8000";
 
-export async function uploadAadhaar(applicationId, aadhaarFile) {
+export async function uploadIndianGovernmentId(applicationId, identityFile) {
   const cleanApplicationId = String(applicationId || "").trim();
 
   console.log("[KYC] applicationId:", cleanApplicationId);
-  console.log("[KYC] aadhaarFile:", aadhaarFile);
+  console.log("[KYC] identityFile:", identityFile);
 
   if (!cleanApplicationId) {
     throw new Error("Application ID missing. Please upload resume again.");
   }
 
-  if (!aadhaarFile) {
-    throw new Error("Please select an Aadhaar file.");
+  if (!identityFile) {
+    throw new Error("Please select an Indian Government ID file.");
   }
 
   const formData = new FormData();
-  formData.append("aadhaar_file", aadhaarFile);
+  formData.append("aadhaar_file", identityFile);
 
-  const url = `${API_BASE_URL}/api/kyc/aadhaar/upload/${encodeURIComponent(
+  const url = `${API_BASE_URL}/api/kyc/identity/upload/${encodeURIComponent(
     cleanApplicationId
   )}`;
 
@@ -54,11 +54,16 @@ export async function uploadAadhaar(applicationId, aadhaarFile) {
     throw new Error(
       data?.message ||
         data?.detail ||
-        `Aadhaar verification failed. HTTP ${response.status}`
+        `Indian Government ID verification failed. HTTP ${response.status}`
     );
   }
 
   return data;
+}
+
+
+export async function uploadAadhaar(applicationId, aadhaarFile) {
+  return uploadIndianGovernmentId(applicationId, aadhaarFile);
 }
 
 

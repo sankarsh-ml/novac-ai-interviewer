@@ -88,6 +88,102 @@ def delete_application(application_id: str) -> bool:
     return False
 
 
+def quick_select_job_applications(job_id: str, count: int) -> dict:
+    if not job_id or count <= 0:
+        return {
+            "success": False,
+            "selected_count": 0,
+            "updated_count": 0,
+            "available_count": 0,
+            "applications": [],
+        }
+
+    with _STORE_LOCK:
+        applications = _load_json(APPLICATIONS_FILE)
+        matching_indexes = [
+            index
+            for index, application in enumerate(applications)
+            if str(application.get("job_id") or "") == str(job_id)
+        ]
+        ranked_indexes = sorted(
+            matching_indexes,
+            key=lambda index: _application_rank_key(applications[index]),
+            reverse=True,
+        )
+        available_indexes = [
+            index
+            for index in ranked_indexes
+            if _is_available_for_quick_select(applications[index])
+        ]
+        available_count = len(available_indexes)
+
+        if count > available_count:
+            updated_applications = [
+                application
+                for application in applications
+                if str(application.get("job_id") or "") == str(job_id)
+            ]
+            return {
+                "success": False,
+                "selected_count": 0,
+                "updated_count": 0,
+                "available_count": available_count,
+                "applications": sorted(updated_applications, key=_application_rank_key, reverse=True),
+                "message": f"Only {available_count} candidate(s) available to select. Requested {count}.",
+            }
+
+        selected_indexes = available_indexes[:count]
+        now = _now()
+
+        for index in selected_indexes:
+            applications[index] = {
+                **applications[index],
+                "hr_decision": "selected",
+                "updated_at": now,
+            }
+
+        _save_json(APPLICATIONS_FILE, applications)
+        updated_applications = [
+            application
+            for application in applications
+            if str(application.get("job_id") or "") == str(job_id)
+        ]
+
+    return {
+        "success": True,
+        "selected_count": len(selected_indexes),
+        "updated_count": len(selected_indexes),
+        "available_count": available_count,
+        "applications": sorted(updated_applications, key=_application_rank_key, reverse=True),
+    }
+
+
+def delete_job_records(job_id: str) -> int:
+    if not job_id:
+        return 0
+
+    with _STORE_LOCK:
+        applications = _load_json(APPLICATIONS_FILE)
+        removed_applications = [
+            application
+            for application in applications
+            if str(application.get("job_id") or "") == str(job_id)
+        ]
+
+        for application in removed_applications:
+            _delete_application_artifacts(application)
+
+        remaining_applications = [
+            application
+            for application in applications
+            if str(application.get("job_id") or "") != str(job_id)
+        ]
+
+        _save_json(APPLICATIONS_FILE, remaining_applications)
+
+    return len(removed_applications)
+
+
 def list_applications() -> list[dict]:
     with _STORE_LOCK:
         return _load_json(APPLICATIONS_FILE)
@@ -274,12 +370,21 @@ def _delete_application_artifacts(application: dict) -> None:
 
     application_id = str(application.get("application_id") or "")
     if application_id:
+        _delete_path_if_owned(STORAGE_DIR / "candidates" / application_id)
+
         for folder in (
+            STORAGE_DIR / "aadhaar",
+            STORAGE_DIR / "aadhaar_photos",
             STORAGE_DIR / "interview_links",
             STORAGE_DIR / "interview_audio",
+            STORAGE_DIR / "live_frames",
+            STORAGE_DIR / "reports",
+            STORAGE_DIR / "resumes",
+            STORAGE_DIR / "resume_photos",
             STORAGE_DIR / "text",
             STORAGE_DIR / "transcripts",
             UPLOADS_DIR / "audio_answers",
+            UPLOADS_DIR / "reports",
             UPLOADS_DIR / "transcripts",
         ):
             if folder.exists():
@@ -345,6 +450,26 @@ def _safe_get(mapping: dict, keys: list[str]):
 
 def _matches_application_id(application: dict, application_id: str) -> bool:
     return str(application.get("application_id") or application.get("_id") or "") == str(application_id)
+
+
+def _is_available_for_quick_select(application: dict) -> bool:
+    decision = str(application.get("hr_decision") or "").lower().strip()
+    return decision not in {"selected", "rejected"}
+
+
+def _application_rank_key(application: dict) -> float:
+    for key in ("ats_score", "rank_score", "score"):
+        value = application.get(key)
+
+        if value is None and isinstance(application.get("ats_result"), dict):
+            value = application["ats_result"].get(key)
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            continue
+
+    return 0.0
 
 
 def _json_safe(value):

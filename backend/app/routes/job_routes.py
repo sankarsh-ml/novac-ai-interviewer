@@ -1,7 +1,8 @@
 import json
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from io import BytesIO
 from fastapi.responses import FileResponse,Response
@@ -16,9 +17,11 @@ from app.services.candidate_report_service import (
 )
 from app.services.db_service import (
     delete_application,
+    delete_job_records,
     get_all_jobs,
     get_application_by_id,
     list_applications,
+    quick_select_job_applications,
     update_application,
     save_job,
     delete_job,
@@ -44,6 +47,9 @@ class BulkReportRequest(BaseModel):
 
 class HRDecisionRequest(BaseModel):
     decision: str
+
+class QuickSelectRequest(BaseModel):
+    count: Any = None
 
 @router.post("/jobs")
 def create_job(job: JobRequest):
@@ -129,6 +135,77 @@ def remove_job(job_id: str):
     return {
         "success": True,
         "message": "Job and all associated data deleted."
+    }
+
+
+@router.post("/jobs/{job_id}/quick-select")
+def quick_select_candidates(job_id: str, request: QuickSelectRequest):
+    count = _parse_quick_select_count(request.count)
+
+    if count is None:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "message": "Count must be a valid number greater than zero.",
+            },
+        )
+
+    if count <= 0:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "message": "Count must be greater than zero.",
+            },
+        )
+
+    print(f"[HR quick-select] job_id={job_id} requested_count={count}")
+    result = quick_select_job_applications(job_id, count)
+    selected_count = result["selected_count"]
+
+    if not result["success"]:
+        print(
+            "[HR quick-select] "
+            f"job_id={job_id} rejected request available_count={result['available_count']} requested_count={count}"
+        )
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "selected_count": 0,
+                "available_count": result["available_count"],
+                "applications": result["applications"],
+                "candidates": result["applications"],
+                "message": result["message"],
+            },
+        )
+
+    print(
+        "[HR quick-select] "
+        f"job_id={job_id} selected_count={selected_count} updated_count={result['updated_count']}"
+    )
+
+    return {
+        "success": True,
+        "selected_count": selected_count,
+        "updated_count": result["updated_count"],
+        "applications": result["applications"],
+        "candidates": result["applications"],
+        "message": _quick_select_message(selected_count),
+    }
+
+
+@router.delete("/jobs/{job_id}/records")
+def remove_job_records(job_id: str):
+    print(f"[HR delete-records] job_id={job_id} started")
+    deleted_count = delete_job_records(job_id)
+    print(f"[HR delete-records] job_id={job_id} deleted_count={deleted_count}")
+
+    return {
+        "success": True,
+        "deleted_count": deleted_count,
+        "message": "All records deleted successfully.",
     }
 
 
@@ -297,6 +374,32 @@ def _finalize_if_partial_or_quit(application: dict) -> dict:
         return application
 
     return finalize_partial_interview(application_id, status=status) or application
+
+
+def _parse_quick_select_count(value) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+
+    text = str(value).strip()
+
+    if not text or not text.isdigit():
+        return None
+
+    return int(text)
+
+
+def _quick_select_message(selected_count: int) -> str:
+    if selected_count == 0:
+        return "No new candidates were selected."
+
+    noun = "candidate" if selected_count == 1 else "candidates"
+    return f"Selected {selected_count} {noun} successfully."
 
 
 def _pdf_response(pdf_bytes: bytes, filename: str) -> StreamingResponse:

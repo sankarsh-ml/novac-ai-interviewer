@@ -1,10 +1,12 @@
 from app.services.application_store_service import (
     create_application,
     delete_application,
+    delete_job_records,
     get_all_jobs,
     get_application_by_id,
     get_job_by_id,
     list_applications,
+    quick_select_job_applications,
     save_job,
     update_application,
     update_ats_decision,

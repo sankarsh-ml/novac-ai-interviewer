@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { createJob, getJobs } from "../services/jobApi.js";
 import "../styles/HRDashboardPage.css";
 
 
@@ -18,8 +19,7 @@ function HRDashboardPage({ onBack }) {
 
   const fetchJobs = async () => {
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/hr/jobs");
-      const data = await response.json();
+      const data = await getJobs();
 
       if (data.success) {
         setJobs(data.jobs);
@@ -43,28 +43,20 @@ function HRDashboardPage({ onBack }) {
     }
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/hr/jobs", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          title,
-          description,
-          required_skills: skills
-            .split(",")
-            .map((skill) => skill.trim())
-            .filter(Boolean),
-          education,
-          experience: Number(experience),
-          keywords: keywords
-            .split(",")
-            .map((keyword) => keyword.trim())
-            .filter(Boolean),
-        }),
+      const data = await createJob({
+        title,
+        description,
+        required_skills: skills
+          .split(",")
+          .map((skill) => skill.trim())
+          .filter(Boolean),
+        education,
+        experience: Number(experience),
+        keywords: keywords
+          .split(",")
+          .map((keyword) => keyword.trim())
+          .filter(Boolean),
       });
-
-      const data = await response.json();
 
       if (data.success) {
         setTitle("");

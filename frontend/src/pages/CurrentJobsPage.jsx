@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { deleteJob, getJobs } from "../services/jobApi.js";
 
 function CurrentJobsPage({
   onBack,
@@ -12,11 +13,7 @@ function CurrentJobsPage({
 
   const fetchJobs = async () => {
     try {
-      const response = await fetch(
-        "http://127.0.0.1:8000/api/hr/jobs"
-      );
-
-      const data = await response.json();
+      const data = await getJobs();
 
       if (data.success) {
         setJobs(data.jobs || []);
@@ -37,14 +34,7 @@ function CurrentJobsPage({
     if (!confirmed) return;
 
     try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/api/hr/jobs/${jobId}`,
-        {
-          method: "DELETE",
-        }
-      );
-
-      const data = await response.json();
+      const data = await deleteJob(jobId);
 
       if (data.success) {
         alert("Job deleted successfully.");

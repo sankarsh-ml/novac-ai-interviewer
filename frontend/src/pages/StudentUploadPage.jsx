@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
-import { uploadResume } from "../api/resumeApi.js";
+import { uploadResume } from "../services/resumeApi.js";
+import { getJobs } from "../services/jobApi.js";
+import { PROCESSING_LEAVE_MESSAGE } from "../config/appConfig.js";
 import "../styles/StudentUploadPage.css";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
-const PROCESSING_LEAVE_MESSAGE = "Processing is still running. Are you sure you want to leave this page?";
 
 function StudentUploadPage({ onBack, onUploadSuccess }) {
   const isMountedRef = useRef(true);
@@ -73,8 +72,7 @@ function StudentUploadPage({ onBack, onUploadSuccess }) {
 
   const fetchJobs = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/hr/jobs`);
-      const data = await response.json();
+      const data = await getJobs();
 
       if (data.success && isMountedRef.current) {
         setJobs(data.jobs);

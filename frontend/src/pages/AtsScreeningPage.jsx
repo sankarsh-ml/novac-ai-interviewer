@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { scoreResume } from "../services/resumeApi.js";
 import "../styles/AtsScreeningPage.css";
 
 
@@ -21,12 +22,9 @@ function AtsScreeningPage({ applicationSummary, onBackHome, onPassed }) {
       setLoading(true);
       setError("");
 
-      const response = await fetch(
-        `http://127.0.0.1:8000/api/ats/score/${applicationSummary.application_id}`
-      );
-      const data = await response.json();
+      const data = await scoreResume(applicationSummary.application_id);
 
-      if (response.ok && data.success) {
+      if (data.success) {
         const result = data.result || data;
         console.log("ATS result:", result);
         setAtsResult(result);

@@ -78,6 +78,7 @@ def delete_application(application_id: str) -> bool:
     db.interviews.delete_many({"$or": _candidate_or_filters(application_id)})
     db.interview_answers.delete_many({"$or": _candidate_or_filters(application_id)})
     db.identity_verifications.delete_many({"$or": _candidate_or_filters(application_id)})
+    db.face_verifications.delete_many({"$or": _candidate_or_filters(application_id)})
     db.reports.delete_many({"$or": _candidate_or_filters(application_id)})
     print(f"[Storage] Deleted related records for candidateId={application_id}")
     return True
@@ -135,10 +136,11 @@ def delete_job_records(job_id: str) -> int:
     db.interviews.delete_many(_job_filter(job_id))
     db.interview_answers.delete_many(_job_filter(job_id))
     db.identity_verifications.delete_many(_job_filter(job_id))
+    db.face_verifications.delete_many(_job_filter(job_id))
     db.reports.delete_many(_job_filter(job_id))
 
     if candidate_ids:
-        for collection_name in ("interviews", "interview_answers", "identity_verifications", "reports"):
+        for collection_name in ("interviews", "interview_answers", "identity_verifications", "face_verifications", "reports"):
             db[collection_name].delete_many({"candidateId": {"$in": candidate_ids}})
             db[collection_name].delete_many({"application_id": {"$in": candidate_ids}})
 
@@ -349,7 +351,7 @@ def _delete_related_gridfs_files(document: dict) -> None:
 def _delete_gridfs_files_for_filters(filters: list[dict]) -> None:
     db = get_database()
 
-    for collection_name in ("interviews", "interview_answers", "identity_verifications", "reports"):
+    for collection_name in ("interviews", "interview_answers", "identity_verifications", "face_verifications", "reports"):
         for document in db[collection_name].find({"$or": filters} if len(filters) > 1 else filters[0]):
             _delete_related_gridfs_files(public_document(document) or {})
 

@@ -24,6 +24,14 @@ from app.services.face_verification_service import (
     verify_faces,
 )
 from app.services.file_storage_service import materialize_file_from_mongo
+from app.services.identity_config_service import (
+    GOVERNMENT_ID_SOURCE,
+    RESUME_PHOTO_REQUIRED_MESSAGE,
+    RESUME_PHOTO_SOURCE,
+    build_identity_config,
+    normalize_requested_identity_config,
+    requires_government_id,
+)
 from app.services.mongo_service import get_database, public_document
 from app.services.question_generation_service import generate_interview_questions, generate_qwen_interview_questions
 from app.services.question_bank_service import load_question_bank
@@ -100,6 +108,13 @@ class DifficultySplit(BaseModel):
     hard: Any = 0
 
 
+class IdentityConfigRequest(BaseModel):
+    requireGovernmentId: bool | None = None
+    require_government_id: bool | None = None
+    faceVerificationSource: str = ""
+    face_verification_source: str = ""
+
+
 class ConfigureQuestionsRequest(BaseModel):
     number_of_questions: Any = None
     questionCount: Any = None
@@ -110,6 +125,10 @@ class ConfigureQuestionsRequest(BaseModel):
     questionSource: str = ""
     difficulty_split: DifficultySplit | dict | None = None
     difficultySplit: DifficultySplit | dict | None = None
+    identity_config: IdentityConfigRequest | dict | None = None
+    identityConfig: IdentityConfigRequest | dict | None = None
+    identity_verification_required: bool | None = None
+    identityVerificationRequired: bool | None = None
 
 
 @router.post("/create-link")
@@ -165,6 +184,7 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
     requested_count = int(interview_config.get("number_of_questions") or application.get("total_questions") or 0)
     configured_count = len(configured_questions.get("questions") or [])
     question_source = str(interview_config.get("question_source") or configured_questions.get("question_source") or configured_questions.get("source") or "question_bank")
+    identity_config = build_identity_config(application)
 
     if requested_count <= 0 or configured_count != requested_count:
         raise HTTPException(
@@ -204,6 +224,8 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
         "selected_question_ids": selected_ids,
         "finalQuestions": configured_questions.get("questions") or [],
         "final_questions": configured_questions.get("questions") or [],
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
     }
 
     get_database().interviews.update_one(
@@ -242,6 +264,8 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
             "question_source": question_source,
             "finalQuestions": configured_questions.get("questions") or [],
             "final_questions": configured_questions.get("questions") or [],
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
         },
     )
 
@@ -259,10 +283,13 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
         "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
         "interview_link_generated": True,
         "already_generated": False,
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
     }
 
 
 def _existing_interview_link_response(application: dict, existing_link: str) -> dict:
+    identity_config = build_identity_config(application)
     return {
         "success": True,
         "link": existing_link,
@@ -277,6 +304,8 @@ def _existing_interview_link_response(application: dict, existing_link: str) -> 
         "interview_scheduled_at": application.get("interview_scheduled_at") or "",
         "interview_link_generated": True,
         "already_generated": True,
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
         "message": "Interview link has already been generated. Use Copy Link from the shortlisted candidates page.",
     }
 
@@ -323,6 +352,8 @@ def validate_token(token: str):
         "candidate_name": link_data.get("candidate_name") or _get_candidate_name(application),
         "email": link_data.get("email") or application.get("email", ""),
         "expiry_date": link_data["expiry_date"],
+        "identityConfig": build_identity_config(application),
+        "identity_config": build_identity_config(application),
     }
 
 
@@ -359,6 +390,7 @@ def get_interview_configure_data(application_id: str):
     )
     if question_bank_count == 0:
         print("[Interview configure-data] auto-switched to Qwen because question bank is empty")
+    identity_config = build_identity_config(application)
     areas = sorted({
         question.get("area_of_interest") or question.get("areaOfInterest") or question.get("category") or "General"
         for question in questions
@@ -390,6 +422,10 @@ def get_interview_configure_data(application_id: str):
             "interview_link": application.get("interview_link") or application.get("verification_link") or "",
             "interview_link_generated": bool(application.get("interview_link_generated") or application.get("interview_link") or application.get("verification_link")),
             "interview_link_generated_at": application.get("interview_link_generated_at") or "",
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
+            "resumePhotoAvailable": identity_config["resumePhotoAvailable"],
+            "resume_photo_available": identity_config["resumePhotoAvailable"],
         },
         "questions": questions,
         "question_bank_count": question_bank_count,
@@ -400,7 +436,15 @@ def get_interview_configure_data(application_id: str):
             "job_roles": job_roles,
             "tags": tags,
         },
-        "interview_config": application.get("interview_config") or {},
+        "interview_config": {
+            **(application.get("interview_config") if isinstance(application.get("interview_config"), dict) else {}),
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
+        },
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
+        "resumePhotoAvailable": identity_config["resumePhotoAvailable"],
+        "resume_photo_available": identity_config["resumePhotoAvailable"],
         "interview_questions": application.get("interview_questions") or {},
     }
 
@@ -432,6 +476,11 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
 
     if requested_count is None or requested_count <= 0:
         raise HTTPException(status_code=400, detail="Number of questions must be greater than zero.")
+
+    identity_config = normalize_requested_identity_config(application, payload)
+
+    if _identity_skip_requested(payload) and not identity_config["resumePhotoAvailable"]:
+        raise HTTPException(status_code=400, detail=RESUME_PHOTO_REQUIRED_MESSAGE)
 
     print(
         "[Interview configure-questions] "
@@ -482,6 +531,8 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
             "generated_questions": generated_questions,
             "finalQuestions": generated_questions,
             "final_questions": generated_questions,
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
             "configured_at": configured_at,
         }
         interview_config = {
@@ -490,6 +541,8 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
             "difficulty_split": split,
             "selected_question_ids": [],
             "filters_used": payload.filters_used.model_dump(),
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
             "configured_at": configured_at,
         }
 
@@ -507,6 +560,8 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
                 "questionSource": "qwen_generated",
                 "difficultySplit": split,
                 "difficulty_split": split,
+                "identityConfig": identity_config,
+                "identity_config": identity_config,
                 "total_questions": requested_count,
             },
         )
@@ -521,6 +576,8 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
             "success": True,
             "interview_config": interview_config,
             "interview_questions": interview_payload,
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
         }
 
     raw_selected_ids = payload.selectedQuestionIds or payload.selected_question_ids
@@ -565,6 +622,8 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
         "selected_question_ids": selected_ids,
         "finalQuestions": selected_questions,
         "final_questions": selected_questions,
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
         "configured_at": configured_at,
     }
     interview_config = {
@@ -573,6 +632,8 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
         "selected_question_ids": selected_ids,
         "selectedQuestionIds": selected_ids,
         "filters_used": filters_used,
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
         "configured_at": configured_at,
     }
 
@@ -592,6 +653,8 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
             "questionBankId": job_id,
             "question_bank_name": interview_payload["question_bank_name"],
             "questionBankName": interview_payload["question_bank_name"],
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
             "total_questions": requested_count,
         },
     )
@@ -600,6 +663,8 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
         "success": True,
         "interview_config": interview_config,
         "interview_questions": interview_payload,
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
     }
 
 
@@ -614,6 +679,8 @@ def get_configured_interview_questions(application_id: str):
         "success": True,
         "interview_config": application.get("interview_config") or {},
         "interview_questions": application.get("interview_questions") or {},
+        "identityConfig": build_identity_config(application),
+        "identity_config": build_identity_config(application),
     }
 
 
@@ -638,7 +705,25 @@ async def face_verify(application_id: str, frame: UploadFile = File(...)):
                 },
             )
 
-        reference_path, reference_source, checked_paths = _find_reference_face_path(application)
+        identity_config = build_identity_config(application)
+        configured_source = identity_config.get("faceVerificationSource") or GOVERNMENT_ID_SOURCE
+
+        if configured_source == RESUME_PHOTO_SOURCE and not identity_config.get("resumePhotoAvailable"):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "match": False,
+                    "score": 0.0,
+                    "threshold": DEFAULT_FACE_VERIFY_THRESHOLD,
+                    "identityConfig": identity_config,
+                    "identity_config": identity_config,
+                    "reference_source": RESUME_PHOTO_SOURCE,
+                    "message": RESUME_PHOTO_REQUIRED_MESSAGE,
+                },
+            )
+
+        reference_path, reference_source, checked_paths = _find_reference_face_path(application, configured_source)
         print(f"[Interview face-verify] reference_source={reference_source}")
         print(f"[Interview face-verify] reference_path={reference_path}")
         print(
@@ -654,7 +739,10 @@ async def face_verify(application_id: str, frame: UploadFile = File(...)):
                     "match": False,
                     "score": 0.0,
                     "threshold": DEFAULT_FACE_VERIFY_THRESHOLD,
-                    "message": "No reference face available from resume or Indian Government ID",
+                    "identityConfig": identity_config,
+                    "identity_config": identity_config,
+                    "reference_source": configured_source,
+                    "message": _missing_reference_message(configured_source),
                     "checked_paths": checked_paths,
                 },
             )
@@ -670,6 +758,8 @@ async def face_verify(application_id: str, frame: UploadFile = File(...)):
                     "score": 0.0,
                     "threshold": DEFAULT_FACE_VERIFY_THRESHOLD,
                     "reference_source": reference_source,
+                    "identityConfig": identity_config,
+                    "identity_config": identity_config,
                     "message": "Uploaded live frame is empty",
                 },
             )
@@ -684,6 +774,10 @@ async def face_verify(application_id: str, frame: UploadFile = File(...)):
             threshold=DEFAULT_FACE_VERIFY_THRESHOLD,
         )
         result["reference_source"] = reference_source
+        result["identityConfig"] = identity_config
+        result["identity_config"] = identity_config
+        result["message"] = _face_verification_message(reference_source, result)
+        _record_face_verification(application_id, reference_source, result)
         print(f"[Interview face-verify] face_verification_result={result}")
 
         return JSONResponse(status_code=200, content=result)
@@ -782,7 +876,13 @@ def get_interview_questions(application_id: str):
     if not _is_interview_access_verified(application):
         raise HTTPException(status_code=403, detail="Candidate verification is required before interview")
 
-    return _prepare_interview_questions(application_id, application)
+    questions = _prepare_interview_questions(application_id, application)
+    identity_config = build_identity_config(application)
+    return {
+        **questions,
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
+    }
 
 
 @router.get("/{application_id}/questions")
@@ -859,6 +959,8 @@ def start_interview(application_id: str):
 
     return {
         **questions,
+        "identityConfig": build_identity_config(application),
+        "identity_config": build_identity_config(application),
         "interview_status": "in_progress",
         "interviewStatus": "in_progress",
         "interview_session_id": session_id,
@@ -1352,7 +1454,7 @@ def complete_interview(application_id: str):
     }
 
 
-def _find_reference_face_path(application: dict):
+def _find_reference_face_path(application: dict, preferred_source: str | None = None):
     aadhaar_candidates = [
         application.get("aadhaar_face_image_path"),
         application.get("aadhaar_photo_path"),
@@ -1384,19 +1486,34 @@ def _find_reference_face_path(application: dict):
 
     checked_paths = []
 
+    if preferred_source == RESUME_PHOTO_SOURCE:
+        for candidate in resume_candidates:
+            resolved_path = _existing_path(candidate, checked_paths, RESUME_PHOTO_SOURCE)
+
+            if resolved_path:
+                print("[Interview face-verify] selected_reference_source=resume_photo")
+                return resolved_path, RESUME_PHOTO_SOURCE, checked_paths
+
+        print("[Interview face-verify] selected_reference_source=none")
+        return None, RESUME_PHOTO_SOURCE, checked_paths
+
     for candidate in aadhaar_candidates:
-        resolved_path = _existing_path(candidate, checked_paths, "aadhaar_face")
+        resolved_path = _existing_path(candidate, checked_paths, GOVERNMENT_ID_SOURCE)
 
         if resolved_path:
-            print("[Interview face-verify] selected_reference_source=aadhaar_face")
-            return resolved_path, "aadhaar_face", checked_paths
+            print("[Interview face-verify] selected_reference_source=government_id")
+            return resolved_path, GOVERNMENT_ID_SOURCE, checked_paths
+
+    if preferred_source == GOVERNMENT_ID_SOURCE:
+        print("[Interview face-verify] selected_reference_source=none")
+        return None, GOVERNMENT_ID_SOURCE, checked_paths
 
     for candidate in resume_candidates:
-        resolved_path = _existing_path(candidate, checked_paths, "resume_face")
+        resolved_path = _existing_path(candidate, checked_paths, RESUME_PHOTO_SOURCE)
 
         if resolved_path:
-            print("[Interview face-verify] selected_reference_source=resume_face")
-            return resolved_path, "resume_face", checked_paths
+            print("[Interview face-verify] selected_reference_source=resume_photo")
+            return resolved_path, RESUME_PHOTO_SOURCE, checked_paths
 
     for candidate in candidate_image_candidates:
         resolved_path = _existing_path(candidate, checked_paths, "candidate_image")
@@ -1407,6 +1524,48 @@ def _find_reference_face_path(application: dict):
 
     print("[Interview face-verify] selected_reference_source=none")
     return None, None, checked_paths
+
+
+def _missing_reference_message(source: str | None) -> str:
+    if source == RESUME_PHOTO_SOURCE:
+        return RESUME_PHOTO_REQUIRED_MESSAGE
+
+    return "Indian Government ID photo is not available. Please complete Indian Government ID verification."
+
+
+def _face_verification_message(reference_source: str | None, result: dict) -> str:
+    matched = result.get("match") is True or result.get("verified") is True
+
+    if reference_source == RESUME_PHOTO_SOURCE:
+        return "Candidate face matched resume photo" if matched else "Face verification failed against resume photo."
+
+    if reference_source == GOVERNMENT_ID_SOURCE:
+        return "Candidate face matched government ID photo" if matched else "Face verification failed against government ID photo."
+
+    return result.get("message") or ("Face verification passed" if matched else "Face verification failed.")
+
+
+def _record_face_verification(application_id: str, source: str | None, result: dict) -> None:
+    matched = result.get("match") is True or result.get("verified") is True
+    now = datetime.now().isoformat()
+    face_verification = {
+        "source": source or "",
+        "status": "passed" if matched else "failed",
+        "score": result.get("score"),
+        "threshold": result.get("threshold", DEFAULT_FACE_VERIFY_THRESHOLD),
+        "verifiedAt": now if matched else "",
+        "checkedAt": now,
+        "message": result.get("message") or _face_verification_message(source, result),
+    }
+    update_application(
+        application_id,
+        {
+            "faceVerification": face_verification,
+            "face_verification": face_verification,
+            "live_face_verification": face_verification,
+            "faceReferenceSource": source or "",
+        },
+    )
 
 
 def _safe_get(mapping: dict, keys: list[str]):
@@ -1573,6 +1732,24 @@ def _difficulty_split_dict(split: DifficultySplit | dict | None) -> dict:
         normalized[difficulty] = count
 
     return normalized
+
+
+def _identity_skip_requested(payload: ConfigureQuestionsRequest) -> bool:
+    requested = payload.identityConfig or payload.identity_config
+
+    if hasattr(requested, "model_dump"):
+        requested = requested.model_dump()
+
+    requested = requested if isinstance(requested, dict) else {}
+
+    if payload.identityVerificationRequired is False or payload.identity_verification_required is False:
+        return True
+
+    if requested.get("requireGovernmentId") is False or requested.get("require_government_id") is False:
+        return True
+
+    source = requested.get("faceVerificationSource") or requested.get("face_verification_source")
+    return str(source or "").strip().lower() in {"resume", "resume_face", "resume_photo"}
 
 
 def _question_difficulty_distribution(questions: list[dict]) -> dict:
@@ -2013,22 +2190,32 @@ def _is_verification_completed(application: dict) -> bool:
 
 
 def _is_interview_access_verified(application: dict) -> bool:
+    if not requires_government_id(application):
+        return _is_face_verified(application)
+
     return _is_aadhaar_verified(application) and _is_face_verified(application)
 
 
 def _is_aadhaar_verified(application: dict) -> bool:
     identity = application.get("identityVerification") or application.get("identity_verification") or {}
-    return (
+    explicit_government_id_passed = (
         application.get("aadhaarVerified") is True
         or application.get("aadhaar_verified") is True
         or application.get("governmentIdVerified") is True
         or application.get("government_id_verified") is True
         or identity.get("isValidIndianGovId") is True
         or identity.get("is_valid_indian_gov_id") is True
-        or str(application.get("verificationStatus") or "").lower() in {"aadhaar_passed", "verified"}
-        or str(application.get("verification_status") or "").lower() in {"aadhaar_passed", "verified"}
-        or str(application.get("verificationStatus") or "").lower() in {"government_id_passed", "identity_passed"}
-        or str(application.get("verification_status") or "").lower() in {"government_id_passed", "identity_passed"}
+        or str(application.get("verificationStatus") or "").lower() in {"aadhaar_passed", "government_id_passed", "identity_passed"}
+        or str(application.get("verification_status") or "").lower() in {"aadhaar_passed", "government_id_passed", "identity_passed"}
+    )
+
+    if not requires_government_id(application):
+        return explicit_government_id_passed
+
+    return (
+        explicit_government_id_passed
+        or str(application.get("verificationStatus") or "").lower() == "verified"
+        or str(application.get("verification_status") or "").lower() == "verified"
     )
 
 
@@ -2078,6 +2265,8 @@ def _build_access_response(application: dict) -> dict:
         "success": True,
         "status": status["status"],
         "message": status["message"],
+        "identityConfig": build_identity_config(application),
+        "identity_config": build_identity_config(application),
         "interview_date": schedule["date"] if schedule else application.get("interview_date") or "",
         "interview_time": schedule["time"] if schedule else application.get("interview_time") or "",
         "interview_scheduled_at": schedule["scheduled_at"].isoformat() if schedule else application.get("interview_scheduled_at") or "",

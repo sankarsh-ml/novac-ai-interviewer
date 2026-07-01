@@ -11,6 +11,12 @@ from pydantic import BaseModel
 
 from app.services.db_service import get_resume_application, update_application
 from app.services.file_storage_service import save_file_to_mongo, save_path_to_mongo
+from app.services.identity_config_service import (
+    GOVERNMENT_ID_SOURCE,
+    RESUME_PHOTO_SOURCE,
+    build_identity_config,
+    requires_government_id,
+)
 from app.services.kyc_service import verify_indian_id_for_application
 
 
@@ -73,6 +79,8 @@ def get_verification_status(application_id: str):
         "success": True,
         "data": {
             "application_id": application_id,
+            "identityConfig": build_identity_config(application),
+            "identity_config": build_identity_config(application),
             "verification_status": application.get("verification_status", "not_started"),
             "aadhaarVerified": _is_aadhaar_verified(application),
             "aadhaar_verified": _is_aadhaar_verified(application),
@@ -97,32 +105,54 @@ def mark_candidate_verified(application_id: str, payload: MarkVerifiedRequest):
     verified_at = _now_iso()
     attempts = max(1, int(payload.attempts or 1))
     matches = max(1, int(payload.matches or 1))
+    identity_config = build_identity_config(application)
+    face_source = _normalize_face_source(payload.reference_source, identity_config)
+    government_id_required = requires_government_id(application)
+    face_verification = {
+        "source": face_source,
+        "status": "passed",
+        "score": payload.face_score,
+        "attempts": attempts,
+        "matches": matches,
+        "required_matches": 1,
+        "verifiedAt": verified_at,
+        "verified_at": verified_at,
+        "message": (
+            "Candidate face matched resume photo"
+            if face_source == RESUME_PHOTO_SOURCE
+            else "Candidate face matched government ID photo"
+        ),
+    }
+    updates = {
+        "faceVerified": True,
+        "face_verified": True,
+        "faceVerificationAttempts": attempts,
+        "faceVerificationMatches": matches,
+        "faceVerificationRequiredMatches": 1,
+        "faceVerificationScore": payload.face_score,
+        "faceReferenceSource": face_source,
+        "verificationStatus": "verified",
+        "verification_status": "verified",
+        "verification_completed": True,
+        "verification_timestamp": verified_at,
+        "faceVerification": face_verification,
+        "face_verification": face_verification,
+        "live_face_verification": face_verification,
+    }
+
+    if government_id_required:
+        updates.update(
+            {
+                "aadhaarVerified": True,
+                "aadhaar_verified": True,
+                "governmentIdVerified": True,
+                "government_id_verified": True,
+            }
+        )
+
     updated = update_application(
         application_id,
-        {
-            "aadhaarVerified": True,
-            "aadhaar_verified": True,
-            "faceVerified": True,
-            "face_verified": True,
-            "faceVerificationAttempts": attempts,
-            "faceVerificationMatches": matches,
-            "faceVerificationRequiredMatches": 1,
-            "faceVerificationScore": payload.face_score,
-            "faceReferenceSource": payload.reference_source,
-            "verificationStatus": "verified",
-            "verification_status": "verified",
-            "verification_completed": True,
-            "verification_timestamp": verified_at,
-            "live_face_verification": {
-                "status": "passed",
-                "reference_source": payload.reference_source,
-                "score": payload.face_score,
-                "attempts": attempts,
-                "matches": matches,
-                "required_matches": 1,
-                "verified_at": verified_at,
-            },
-        },
+        updates,
     )
 
     if not updated:
@@ -132,8 +162,10 @@ def mark_candidate_verified(application_id: str, payload: MarkVerifiedRequest):
         "success": True,
         "data": {
             "application_id": application_id,
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
             "verification_status": "verified",
-            "aadhaarVerified": True,
+            "aadhaarVerified": government_id_required,
             "faceVerified": True,
             "verification_completed": True,
             "next_step": "interview",
@@ -241,12 +273,17 @@ def _candidate_verification_payload(application: dict) -> dict:
     identity = application.get("identityVerification") or application.get("identity_verification") or {}
     aadhaar = application.get("aadhaar_verification") or application.get("kyc_verification") or identity or {}
     resume = application.get("resume") if isinstance(application.get("resume"), dict) else {}
+    identity_config = build_identity_config(application)
 
     return {
         "application_id": application.get("application_id"),
         "candidate_name": application.get("candidate_name") or resume.get("candidate_name") or "",
         "email": application.get("email") or resume.get("email") or "",
         "ats_status": application.get("ats_status"),
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
+        "resumePhotoAvailable": identity_config["resumePhotoAvailable"],
+        "resume_photo_available": identity_config["resumePhotoAvailable"],
         "verification_status": application.get("verification_status", "not_started"),
         "aadhaarVerified": _is_aadhaar_verified(application),
         "aadhaar_verified": _is_aadhaar_verified(application),
@@ -341,15 +378,24 @@ def _is_verification_completed(application: dict) -> bool:
 
 def _is_aadhaar_verified(application: dict) -> bool:
     identity = application.get("identityVerification") or application.get("identity_verification") or {}
-    return (
+    explicit_government_id_passed = (
         application.get("aadhaarVerified") is True
         or application.get("aadhaar_verified") is True
         or application.get("governmentIdVerified") is True
         or application.get("government_id_verified") is True
         or identity.get("isValidIndianGovId") is True
         or identity.get("is_valid_indian_gov_id") is True
-        or str(application.get("verification_status") or "").lower() in {"aadhaar_passed", "verified"}
-        or str(application.get("verification_status") or "").lower() in {"government_id_passed", "identity_passed"}
+        or str(application.get("verification_status") or "").lower() in {"aadhaar_passed", "government_id_passed", "identity_passed"}
+        or str(application.get("verificationStatus") or "").lower() in {"aadhaar_passed", "government_id_passed", "identity_passed"}
+    )
+
+    if not requires_government_id(application):
+        return explicit_government_id_passed
+
+    return (
+        explicit_government_id_passed
+        or str(application.get("verification_status") or "").lower() == "verified"
+        or str(application.get("verificationStatus") or "").lower() == "verified"
     )
 
 
@@ -367,3 +413,12 @@ def _now_iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
+
+
+def _normalize_face_source(reference_source: str, identity_config: dict) -> str:
+    source = str(reference_source or identity_config.get("faceVerificationSource") or "").strip().lower()
+
+    if source in {"resume", "resume_face", "resume_photo"}:
+        return RESUME_PHOTO_SOURCE
+
+    return GOVERNMENT_ID_SOURCE

@@ -82,6 +82,8 @@ def ensure_indexes() -> None:
         _db.interview_answers.create_index("application_id")
         _db.identity_verifications.create_index("candidateId")
         _db.identity_verifications.create_index("application_id")
+        _db.face_verifications.create_index("candidateId")
+        _db.face_verifications.create_index("application_id")
         _db.reports.create_index("candidateId")
         _db.reports.create_index("jobId")
         _db.admin_users.create_index("username", unique=True)

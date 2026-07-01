@@ -1,27 +1,36 @@
 import { useEffect, useRef, useState } from "react";
-import ResumeViewerPage from "../pages/ResumeViewerPage";
-import AadhaarUploadPage from "../pages/AadhaarUploadPage.jsx";
-import AtsScreeningPage from "../pages/AtsScreeningPage.jsx";
-import CurrentJobsPage from "../pages/CurrentJobsPage.jsx";
-import FaceVerificationPage from "../pages/FaceVerificationPage.jsx";
-import HomePage from "../pages/HomePage.jsx";
-import HRDashboardPage from "../pages/HRDashboardPage.jsx";
-import HRHomePage from "../pages/HRHomePage.jsx";
-import InterviewPage from "../pages/InterviewPage.jsx";
-import JobApplicationsPage from "../pages/JobApplicationsPage.jsx";
-import ConfigureInterviewPage from "../pages/ConfigureInterviewPage.jsx";
-import QuestionBankPage from "../pages/QuestionBankPage.jsx";
-import ShortlistedCandidatesPage from "../pages/ShortlistedCandidatesPage.jsx";
-import StudentUploadPage from "../pages/StudentUploadPage.jsx";
-import UploadResumesPage from "../pages/UploadResumePage.jsx";
+import ResumeViewerPage from "@presentation/pages/ResumeViewerPage";
+import AadhaarUploadPage from "@presentation/pages/AadhaarUploadPage.jsx";
+import AtsScreeningPage from "@presentation/pages/AtsScreeningPage.jsx";
+import CurrentJobsPage from "@presentation/pages/CurrentJobsPage.jsx";
+import FaceVerificationPage from "@presentation/components/identity/FaceVerification.jsx";
+import HomePage from "@presentation/pages/HomePage.jsx";
+import HRDashboardPage from "@presentation/pages/HRDashboardPage.jsx";
+import HRHomePage from "@presentation/pages/HRHomePage.jsx";
+import InterviewPage from "@presentation/pages/InterviewPage.jsx";
+import JobApplicationsPage from "@presentation/pages/JobApplicationsPage.jsx";
+import ConfigureInterviewPage from "@presentation/pages/ConfigureInterviewPage.jsx";
+import QuestionBankPage from "@presentation/pages/QuestionBankPage.jsx";
+import ShortlistedCandidatesPage from "@presentation/pages/ShortlistedCandidatesPage.jsx";
+import StudentUploadPage from "@presentation/pages/StudentUploadPage.jsx";
+import UploadResumesPage from "@presentation/pages/UploadResumePage.jsx";
 import {
-  getCandidateVerificationData,
-  getVerificationStatus,
-} from "../services/identityApi.js";
-import { checkInterviewAccess } from "../services/interviewApi.js";
-import AdminLoginPage from "../pages/AdminLoginPage.jsx";
+  fetchCandidateVerificationData,
+  fetchVerificationStatus,
+} from "@application/useCases/identityUseCases.js";
+import { checkInterviewAccess } from "@application/useCases/interviewUseCases.js";
+import {
+  isFaceVerified,
+  isGovernmentIdRequired,
+  isGovernmentIdVerified,
+  isResumePhotoMissingFallback,
+  shouldUseResumePhotoVerification,
+} from "@domain/rules/identityRules.js";
+import { useDependencies } from "@presentation/hooks/useDependencies.js";
+import AdminLoginPage from "@presentation/pages/AdminLoginPage.jsx";
 
 function App() {
+  const { identityRepository, interviewRepository } = useDependencies();
   const [currentPage, setCurrentPage] = useState("home");
   const [applicationSummary, setApplicationSummary] = useState(null);
   const [aadhaarSummary, setAadhaarSummary] = useState(null);
@@ -46,7 +55,7 @@ function App() {
       window.removeEventListener("beforeunload", stopOnUnload);
       stopCandidateCamera();
     };
-  }, []);
+  }, [identityRepository, interviewRepository]);
 
   useEffect(() => {
     const configureMatch = window.location.pathname.match(/^\/configure-interview\/([^/]+)$/);
@@ -73,7 +82,7 @@ function App() {
 
     const continueCandidateFlow = () => {
     if (verifyMatch) {
-      getCandidateVerificationData(applicationId)
+      fetchCandidateVerificationData(identityRepository, applicationId)
         .then((data) => {
           if (shouldUseResumePhotoVerification(data.data)) {
             window.history.replaceState(null, "", `/face-verification/${encodeURIComponent(applicationId)}`);
@@ -93,19 +102,19 @@ function App() {
     }
 
     if (faceMatch) {
-      getVerificationStatus(applicationId)
+      fetchVerificationStatus(identityRepository, applicationId)
         .then((data) => {
           if (isResumePhotoMissingFallback(data.data)) {
             window.history.replaceState(null, "", `/verify/${encodeURIComponent(applicationId)}`);
-            return getCandidateVerificationData(applicationId).then((candidateData) => {
+            return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
               setApplicationSummary(candidateData.data);
               setCurrentPage("aadhaar");
             });
           }
 
-          if (isGovernmentIdRequired(data.data) && !isAadhaarVerified(data.data)) {
+          if (isGovernmentIdRequired(data.data) && !isGovernmentIdVerified(data.data)) {
             window.history.replaceState(null, "", `/verify/${encodeURIComponent(applicationId)}`);
-            return getCandidateVerificationData(applicationId).then((candidateData) => {
+            return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
               setApplicationSummary(candidateData.data);
               setCurrentPage("aadhaar");
             });
@@ -113,13 +122,13 @@ function App() {
 
           if (isFaceVerified(data.data)) {
             window.history.replaceState(null, "", `/interview/${encodeURIComponent(applicationId)}`);
-            return getCandidateVerificationData(applicationId).then((candidateData) => {
+            return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
               setApplicationSummary(candidateData.data);
               setCurrentPage("interview");
             });
           }
 
-          return getCandidateVerificationData(applicationId).then((candidateData) => {
+          return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
             setApplicationSummary(candidateData.data);
             setCurrentPage("face-verification");
           });
@@ -131,19 +140,19 @@ function App() {
       return;
     }
 
-    getVerificationStatus(applicationId)
+    fetchVerificationStatus(identityRepository, applicationId)
       .then((data) => {
         if (isResumePhotoMissingFallback(data.data)) {
           window.history.replaceState(null, "", `/verify/${encodeURIComponent(applicationId)}`);
-          return getCandidateVerificationData(applicationId).then((candidateData) => {
+          return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
             setApplicationSummary(candidateData.data);
             setCurrentPage("aadhaar");
           });
         }
 
-        if (isGovernmentIdRequired(data.data) && !isAadhaarVerified(data.data)) {
+        if (isGovernmentIdRequired(data.data) && !isGovernmentIdVerified(data.data)) {
           window.history.replaceState(null, "", `/verify/${encodeURIComponent(applicationId)}`);
-          return getCandidateVerificationData(applicationId).then((candidateData) => {
+          return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
             setApplicationSummary(candidateData.data);
             setCurrentPage("aadhaar");
           });
@@ -151,13 +160,13 @@ function App() {
 
         if (!isFaceVerified(data.data)) {
           window.history.replaceState(null, "", `/face-verification/${encodeURIComponent(applicationId)}`);
-          return getCandidateVerificationData(applicationId).then((candidateData) => {
+          return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
             setApplicationSummary(candidateData.data);
             setCurrentPage("face-verification");
           });
         }
 
-        return getCandidateVerificationData(applicationId).then((candidateData) => {
+        return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
           setApplicationSummary(candidateData.data);
           setCurrentPage("interview");
         });
@@ -168,9 +177,9 @@ function App() {
       });
     };
 
-    checkInterviewAccess(applicationId)
+    checkInterviewAccess(interviewRepository, applicationId)
       .then((access) => {
-        if (access.status === "allowed" || access.status === "in_progress") {
+        if (access.status === "allowed" || access.status === "not_started" || access.status === "in_progress") {
           continueCandidateFlow();
           return;
         }
@@ -181,7 +190,7 @@ function App() {
           return;
         }
 
-        if (access.status === "completed") {
+        if (access.status === "complete" || access.status === "completed") {
           setLinkValidationError(access.message || "Interview already completed.");
           setCurrentPage("candidate-link-error");
           return;
@@ -194,7 +203,7 @@ function App() {
         setLinkValidationError(error.message || "Interview schedule could not be verified.");
         setCurrentPage("candidate-link-error");
       });
-  }, []);
+  }, [identityRepository, interviewRepository]);
 
   const handleUploadSuccess = (summary) => {
     setApplicationSummary(summary);
@@ -485,66 +494,3 @@ function App() {
 
 
 export default App;
-
-
-function isAadhaarVerified(data) {
-  const identity = data?.identityVerification || data?.identity_verification || {};
-  return (
-    data?.aadhaarVerified === true ||
-    data?.aadhaar_verified === true ||
-    data?.governmentIdVerified === true ||
-    data?.government_id_verified === true ||
-    identity?.isValidIndianGovId === true ||
-    identity?.is_valid_indian_gov_id === true ||
-    String(data?.verification_status || "").toLowerCase() === "aadhaar_passed" ||
-    String(data?.verification_status || "").toLowerCase() === "government_id_passed" ||
-    String(data?.verification_status || "").toLowerCase() === "identity_passed" ||
-    String(data?.verificationStatus || "").toLowerCase() === "aadhaar_passed" ||
-    String(data?.verificationStatus || "").toLowerCase() === "government_id_passed" ||
-    String(data?.verificationStatus || "").toLowerCase() === "identity_passed" ||
-    String(data?.verificationStatus || "").toLowerCase() === "verified" ||
-    String(data?.verification_status || "").toLowerCase() === "verified"
-  );
-}
-
-
-function getIdentityConfig(data) {
-  return data?.identityConfig || data?.identity_config || {};
-}
-
-
-function isGovernmentIdRequired(data) {
-  const identityConfig = getIdentityConfig(data);
-  return identityConfig.requireGovernmentId !== false;
-}
-
-
-function shouldUseResumePhotoVerification(data) {
-  const identityConfig = getIdentityConfig(data);
-  return (
-    identityConfig.requireGovernmentId === false &&
-    identityConfig.faceVerificationSource === "resume_photo" &&
-    identityConfig.resumePhotoAvailable === true
-  );
-}
-
-
-function isResumePhotoMissingFallback(data) {
-  const identityConfig = getIdentityConfig(data);
-  return (
-    identityConfig.requireGovernmentId === false &&
-    identityConfig.faceVerificationSource === "resume_photo" &&
-    identityConfig.resumePhotoAvailable !== true
-  );
-}
-
-
-function isFaceVerified(data) {
-  return (
-    data?.faceVerified === true ||
-    data?.face_verified === true ||
-    data?.verification_completed === true ||
-    String(data?.verificationStatus || "").toLowerCase() === "verified" ||
-    String(data?.verification_status || "").toLowerCase() === "verified"
-  );
-}

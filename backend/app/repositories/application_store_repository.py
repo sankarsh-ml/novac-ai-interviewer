@@ -481,16 +481,13 @@ def _mirror_related_records(application_id: str, updates: dict) -> None:
 def _interview_collection_status(application: dict) -> str:
     status = str(application.get("interview_status") or application.get("interviewStatus") or "").lower()
 
-    if status in {"completed"}:
-        return "completed"
+    if status in {"complete", "completed"}:
+        return "complete"
 
     if status in {"partial", "quit", "interrupted"}:
-        return "abandoned"
+        return "partial"
 
-    if status in {"in_progress", "started"}:
-        return "started"
-
-    return "configured"
+    return "not_started"
 
 
 def _now() -> str:

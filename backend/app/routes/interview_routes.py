@@ -159,9 +159,9 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
         )
         return _existing_interview_link_response(application, existing_link)
 
-    current_status = str(application.get("interview_status") or application.get("interviewStatus") or "").lower()
+    current_status = _normalize_interview_status(application)
 
-    if current_status in {"in_progress", "partial", "quit", "interrupted"}:
+    if current_status in {"partial"}:
         raise HTTPException(status_code=400, detail="This candidate already has an interview attempt recorded.")
 
     schedule = _normalize_schedule(payload, application)
@@ -203,6 +203,7 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
         )
 
     token = uuid.uuid4().hex
+    attempt_number = _next_attempt_number(application)
     expiry_date = _normalize_expiry_date(payload.expiry_date)
     frontend_base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
     verification_url = f"{frontend_base_url}/verify/{payload.application_id}"
@@ -241,6 +242,7 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
             "job_id": application.get("job_id") or application.get("jobId"),
             "interviewLinkToken": token,
             "status": "configured",
+            "attempt_number": attempt_number,
         },
         {"createdAt": datetime.now().isoformat()},
     )
@@ -257,7 +259,12 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
             "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
             "interview_link_generated": True,
             "interview_link_generated_at": datetime.now().isoformat(),
-            "interview_status": application.get("interview_status") or "link_created",
+            "interview_status": "not_started",
+            "interviewStatus": "not_started",
+            "interview_completed": False,
+            "interviewCompleted": False,
+            "active_attempt_id": token,
+            "attempt_number": attempt_number,
             "questionSource": question_source,
             "question_source": question_source,
             "finalQuestions": configured_questions.get("questions") or [],
@@ -281,9 +288,81 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
         "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
         "interview_link_generated": True,
         "already_generated": False,
+        "interview_status": "not_started",
+        "attempt_number": attempt_number,
+        "active_attempt_id": token,
         "identityConfig": identity_config,
         "identity_config": identity_config,
     }
+
+
+@router.post("/reschedule-link")
+def reschedule_interview_link(payload: CreateInterviewLinkRequest):
+    application = get_resume_application(payload.application_id)
+
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    current_status = _normalize_interview_status(application)
+
+    if current_status not in {"not_started", "partial", "complete"}:
+        current_status = "not_started"
+
+    schedule = _normalize_schedule(payload, application)
+
+    if not schedule:
+        raise HTTPException(status_code=400, detail="Set a proper interview date and time.")
+
+    if _join_window_end(schedule["scheduled_at"]) < _now_minute():
+        raise HTTPException(
+            status_code=400,
+            detail="Set a proper interview date and time. This interview schedule is already expired.",
+        )
+
+    archived_attempts = _archive_current_attempt(application, current_status)
+    update_application(
+        payload.application_id,
+        {
+            "interview_attempts": archived_attempts,
+            "interview_link": "",
+            "verification_link": "",
+            "interview_token": "",
+            "interview_link_generated": False,
+            "interview_link_generated_at": None,
+            "interview_answers": {},
+            "interview_status": "not_started",
+            "interviewStatus": "not_started",
+            "interview_completed": False,
+            "interviewCompleted": False,
+            "interview_score": 0,
+            "average_interview_score": 0,
+            "answered_count": 0,
+            "unanswered_count": 0,
+            "interview_started_at": None,
+            "interview_completed_at": None,
+            "completedAt": None,
+            "interview_quit_at": None,
+            "interview_last_seen_at": None,
+            "interview_session_id": "",
+            "active_attempt_id": "",
+            "rescheduled_at": datetime.now().isoformat(),
+            "interview_date": schedule["date"],
+            "interview_time": schedule["time"],
+            "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
+        },
+    )
+
+    refreshed = get_resume_application(payload.application_id) or application
+    payload.candidate_name = payload.candidate_name or refreshed.get("candidate_name") or _get_candidate_name(refreshed)
+    payload.email = payload.email or refreshed.get("email", "")
+    payload.interview_date = schedule["date"]
+    payload.interview_time = schedule["time"]
+    payload.interview_scheduled_at = schedule["scheduled_at"].isoformat()
+
+    response = create_interview_link(payload)
+    response["rescheduled"] = True
+    response["previous_interview_status"] = current_status
+    return response
 
 
 def _existing_interview_link_response(application: dict, existing_link: str) -> dict:
@@ -412,8 +491,10 @@ def get_interview_configure_data(application_id: str):
             "email": application.get("email") or "",
             "job_id": job_id,
             "job_title": application.get("job_title") or application.get("job_role") or "",
-            "interview_status": application.get("interview_status") or application.get("interviewStatus") or "",
+            "interview_status": _normalize_interview_status(application),
+            "interviewStatus": _normalize_interview_status(application),
             "interview_completed": _is_interview_completed(application),
+            "report_available": select_report_application(application) is not None,
             "interview_date": application.get("interview_date") or "",
             "interview_time": application.get("interview_time") or "",
             "interview_scheduled_at": application.get("interview_scheduled_at") or "",
@@ -897,18 +978,18 @@ def start_interview(application_id: str):
 
     access = _build_access_response(application)
 
-    if access["status"] == "completed":
+    if access["status"] == "complete":
         return {
             "success": True,
-            "status": "completed",
-            "interview_status": "completed",
-            "interviewStatus": "completed",
+            "status": "complete",
+            "interview_status": "complete",
+            "interviewStatus": "complete",
             "interview_completed": True,
             "questions": [],
             "message": "Interview already completed",
         }
 
-    if access["status"] not in {"allowed", "in_progress"}:
+    if access["status"] not in {"allowed", "not_started"}:
         raise HTTPException(status_code=403, detail=access["message"])
 
     if not _is_interview_access_verified(application):
@@ -917,9 +998,9 @@ def start_interview(application_id: str):
     if _is_interview_completed(application):
         return {
             "success": True,
-            "status": "completed",
-            "interview_status": "completed",
-            "interviewStatus": "completed",
+            "status": "complete",
+            "interview_status": "complete",
+            "interviewStatus": "complete",
             "interview_completed": True,
             "questions": [],
             "message": "Interview already completed",
@@ -939,8 +1020,8 @@ def start_interview(application_id: str):
     update_application(
         application_id,
         {
-            "interview_status": "in_progress",
-            "interviewStatus": "in_progress",
+            "interview_status": "not_started",
+            "interviewStatus": "not_started",
             "interview_completed": False,
             "interview_started_at": application.get("interview_started_at") or now,
             "interview_last_seen_at": now,
@@ -959,8 +1040,8 @@ def start_interview(application_id: str):
         **questions,
         "identityConfig": build_identity_config(application),
         "identity_config": build_identity_config(application),
-        "interview_status": "in_progress",
-        "interviewStatus": "in_progress",
+        "interview_status": "not_started",
+        "interviewStatus": "not_started",
         "interview_session_id": session_id,
         "interview_started_at": application.get("interview_started_at") or now,
         "total_questions": total_questions,
@@ -975,10 +1056,10 @@ def heartbeat_interview(application_id: str):
         raise HTTPException(status_code=404, detail="Application not found")
 
     if _is_interview_completed(application):
-        return {"success": True, "status": "completed"}
+        return {"success": True, "status": "complete"}
 
     update_application(application_id, {"interview_last_seen_at": datetime.now().isoformat()})
-    return {"success": True, "status": application.get("interview_status") or "in_progress"}
+    return {"success": True, "status": _normalize_interview_status(application)}
 
 
 @router.post("/{application_id}/quit")
@@ -989,9 +1070,9 @@ def quit_interview(application_id: str):
         raise HTTPException(status_code=404, detail="Application not found")
 
     if _is_interview_completed(application):
-        return {"success": True, "status": "completed"}
+        return {"success": True, "status": "complete"}
 
-    status = "partial" if _answered_count(application) > 0 else "quit"
+    status = "partial" if _answered_count(application) > 0 else "not_started"
     finalized = finalize_partial_interview(application_id, status=status)
 
     return {
@@ -1011,11 +1092,16 @@ def save_interview_answer(application_id: str, payload: AnswerSaveRequest):
         raise HTTPException(status_code=404, detail="Application not found")
 
     record = _upsert_saved_answer(application, payload)
+    answered_count = _answered_count({"interview_answers": record["interview_answers"]})
     update_application(
         application_id,
         {
             "interview_answers": record["interview_answers"],
-            "answered_count": _answered_count({"interview_answers": record["interview_answers"]}),
+            "interview_status": "partial" if answered_count > 0 else "not_started",
+            "interviewStatus": "partial" if answered_count > 0 else "not_started",
+            "interview_completed": False,
+            "interviewCompleted": False,
+            "answered_count": answered_count,
             "interview_last_seen_at": datetime.now().isoformat(),
         },
     )
@@ -1258,8 +1344,8 @@ def evaluate_interview_answer(application_id: str, request: AnswerEvaluationRequ
         application_id,
         {
             "interview_answers": raw_record["interview_answers"],
-            "interview_status": "in_progress",
-            "interviewStatus": "in_progress",
+            "interview_status": "partial",
+            "interviewStatus": "partial",
             "interview_completed": False,
             "answered_count": _answered_count({"interview_answers": raw_record["interview_answers"]}),
             "interview_last_seen_at": datetime.now().isoformat(),
@@ -1324,8 +1410,8 @@ def evaluate_interview_answer(application_id: str, request: AnswerEvaluationRequ
         application_id,
         {
             "interview_answers": interview_answers,
-            "interview_status": "in_progress",
-            "interviewStatus": "in_progress",
+            "interview_status": "partial",
+            "interviewStatus": "partial",
             "interview_completed": False,
             "interview_score": current_score,
             "answered_count": _answered_count({"interview_answers": interview_answers}),
@@ -1425,8 +1511,8 @@ def complete_interview(application_id: str):
     average_score = round(sum(scores) / len(scores), 1) if scores else 0
     updates = {
         "interview_answers": interview_answers,
-        "interview_status": "completed",
-        "interviewStatus": "completed",
+        "interview_status": "complete",
+        "interviewStatus": "complete",
         "interview_completed": True,
         "interviewCompleted": True,
         "interview_score": average_score,
@@ -1435,6 +1521,10 @@ def complete_interview(application_id: str):
         "answered_count": _answered_count({"interview_answers": interview_answers}),
         "total_questions": len(questions),
     }
+    updates["interview_attempts"] = _upsert_attempt_snapshot(
+        application.get("interview_attempts"),
+        _current_attempt_snapshot({**application, **updates}, "complete", updates["interview_completed_at"]),
+    )
 
     token = application.get("interview_token")
 
@@ -1445,7 +1535,7 @@ def complete_interview(application_id: str):
 
     return {
         "success": True,
-        "interview_status": "completed",
+        "interview_status": "complete",
         "interview_score": average_score,
         "answered_count": _answered_count({"interview_answers": interview_answers}),
         "total_questions": len(questions),
@@ -2029,10 +2119,10 @@ def finalize_partial_interview(application_id: str, status: str | None = None) -
     answered_count = _answered_count({"interview_answers": normalized_answers})
     total_questions = len([question for question in questions if isinstance(question, dict)])
     unanswered_count = max(total_questions - answered_count, 0)
-    finalized_status = status or str(application.get("interview_status") or application.get("interviewStatus") or "").lower()
+    finalized_status = _normalize_status_value(status or application.get("interview_status") or application.get("interviewStatus"), application)
 
-    if finalized_status not in {"partial", "quit", "interrupted"}:
-        finalized_status = "partial" if answered_count > 0 else "quit"
+    if finalized_status not in {"partial", "not_started"}:
+        finalized_status = "partial" if answered_count > 0 else "not_started"
 
     average_score = _average_configured_answer_scores(normalized_answers, total_questions)
     updates = {
@@ -2049,9 +2139,238 @@ def finalize_partial_interview(application_id: str, status: str | None = None) -
         "interview_quit_at": application.get("interview_quit_at") or now,
         "interview_last_seen_at": now,
     }
+    updates["interview_attempts"] = _upsert_attempt_snapshot(
+        application.get("interview_attempts"),
+        _current_attempt_snapshot({**application, **updates}, finalized_status, now),
+    )
     update_application(application_id, updates)
 
     return {**application, **updates}
+
+
+def _normalize_status_value(value, application: dict | None = None) -> str:
+    status = str(value or "").strip().lower()
+
+    if status in {"complete", "completed"}:
+        return "complete"
+
+    if status in {"partial", "quit", "interrupted"}:
+        return "partial"
+
+    if status in {"not_started", "not started", "link_created", "configured", "pending", ""}:
+        return "not_started"
+
+    if status == "in_progress":
+        return "partial" if _answered_count(application or {}) > 0 else "not_started"
+
+    return "not_started"
+
+
+def _normalize_interview_status(application: dict | None) -> str:
+    if not isinstance(application, dict):
+        return "not_started"
+
+    if application.get("interview_completed") is True or application.get("interviewCompleted") is True:
+        return "complete"
+
+    return _normalize_status_value(
+        application.get("interview_status") or application.get("interviewStatus"),
+        application,
+    )
+
+
+def _next_attempt_number(application: dict) -> int:
+    attempts = _attempt_history(application)
+    numbers = [
+        int(attempt.get("attempt_number") or 0)
+        for attempt in attempts
+        if isinstance(attempt, dict) and str(attempt.get("attempt_number") or "").isdigit()
+    ]
+    current_number = application.get("attempt_number")
+
+    try:
+        numbers.append(int(current_number or 0))
+    except (TypeError, ValueError):
+        pass
+
+    return max(numbers or [0]) + 1
+
+
+def _attempt_history(application: dict | list | None) -> list[dict]:
+    if isinstance(application, list):
+        raw_attempts = application
+    elif isinstance(application, dict):
+        raw_attempts = application.get("interview_attempts") or application.get("interviewAttempts") or []
+    else:
+        raw_attempts = []
+
+    return [attempt for attempt in raw_attempts if isinstance(attempt, dict)]
+
+
+def _archive_current_attempt(application: dict, status: str | None = None) -> list[dict]:
+    attempts = _attempt_history(application)
+    snapshot = _current_attempt_snapshot(application, status)
+
+    if not snapshot:
+        return attempts
+
+    return _upsert_attempt_snapshot(attempts, snapshot)
+
+
+def _upsert_attempt_snapshot(attempts_value, snapshot: dict) -> list[dict]:
+    attempts = _attempt_history(attempts_value)
+    attempt_id = str(snapshot.get("attempt_id") or "")
+    replaced = False
+    next_attempts = []
+
+    for attempt in attempts:
+        if attempt_id and str(attempt.get("attempt_id") or "") == attempt_id:
+            next_attempts.append({**attempt, **snapshot})
+            replaced = True
+        else:
+            next_attempts.append(attempt)
+
+    if not replaced:
+        next_attempts.append(snapshot)
+
+    return sorted(next_attempts, key=_attempt_sort_key)
+
+
+def _current_attempt_snapshot(application: dict, status: str | None = None, timestamp: str | None = None) -> dict:
+    normalized_status = _normalize_status_value(status or application.get("interview_status"), application)
+    answers = application.get("interview_answers") if isinstance(application.get("interview_answers"), dict) else {}
+    has_link = bool(application.get("interview_link") or application.get("verification_link") or application.get("interview_token"))
+    has_answers = bool(answers)
+    has_started = bool(application.get("interview_started_at") or application.get("interview_completed_at") or application.get("interview_quit_at"))
+
+    if not (has_link or has_answers or has_started or normalized_status in {"partial", "complete"}):
+        return {}
+
+    now = timestamp or datetime.now().isoformat()
+    attempt_id = str(
+        application.get("active_attempt_id")
+        or application.get("interview_session_id")
+        or application.get("interview_token")
+        or f"attempt-{application.get('attempt_number') or 1}"
+    )
+    try:
+        attempt_number = int(application.get("attempt_number") or 1)
+    except (TypeError, ValueError):
+        attempt_number = 1
+    question_payload = application.get("interview_questions") if isinstance(application.get("interview_questions"), dict) else {}
+    questions = question_payload.get("questions") if isinstance(question_payload.get("questions"), list) else []
+    answered_count = _answered_count({"interview_answers": answers})
+    total_questions = int(application.get("total_questions") or len(questions) or 0)
+
+    return {
+        "attempt_id": attempt_id,
+        "attempt_number": attempt_number,
+        "status": normalized_status,
+        "interview_status": normalized_status,
+        "interview_answers": answers,
+        "interview_questions": question_payload,
+        "question_source": application.get("question_source") or application.get("questionSource") or "",
+        "interview_score": application.get("interview_score") or application.get("interviewScore") or 0,
+        "answered_count": answered_count,
+        "total_questions": total_questions,
+        "interview_link": application.get("interview_link") or application.get("verification_link") or "",
+        "interview_token": application.get("interview_token") or "",
+        "interview_started_at": application.get("interview_started_at"),
+        "interview_completed_at": application.get("interview_completed_at") or application.get("completedAt"),
+        "interview_quit_at": application.get("interview_quit_at"),
+        "created_at": application.get("interview_link_generated_at") or application.get("createdAt") or now,
+        "updated_at": now,
+        "report_ready": normalized_status in {"partial", "complete"},
+    }
+
+
+def _attempt_sort_key(attempt: dict):
+    number = attempt.get("attempt_number") or 0
+
+    try:
+        number = int(number)
+    except (TypeError, ValueError):
+        number = 0
+
+    timestamp = (
+        attempt.get("interview_completed_at")
+        or attempt.get("interview_quit_at")
+        or attempt.get("updated_at")
+        or attempt.get("created_at")
+        or ""
+    )
+    return (number, str(timestamp))
+
+
+def select_report_application(application: dict) -> dict | None:
+    if not isinstance(application, dict):
+        return None
+
+    report_attempts = []
+    current_status = _normalize_interview_status(application)
+
+    if current_status in {"partial", "complete"}:
+        current_snapshot = _current_attempt_snapshot(application, current_status)
+        if current_snapshot:
+            report_attempts.append(current_snapshot)
+
+    report_attempts.extend([
+        attempt
+        for attempt in _attempt_history(application)
+        if _normalize_status_value(attempt.get("status") or attempt.get("interview_status"), attempt) in {"partial", "complete"}
+    ])
+
+    complete_attempts = [
+        attempt
+        for attempt in report_attempts
+        if _normalize_status_value(attempt.get("status") or attempt.get("interview_status"), attempt) == "complete"
+    ]
+    partial_attempts = [
+        attempt
+        for attempt in report_attempts
+        if _normalize_status_value(attempt.get("status") or attempt.get("interview_status"), attempt) == "partial"
+    ]
+    selected = None
+
+    if complete_attempts:
+        selected = sorted(complete_attempts, key=_attempt_sort_key)[-1]
+    elif partial_attempts:
+        selected = sorted(partial_attempts, key=_attempt_sort_key)[-1]
+
+    if not selected:
+        return None
+
+    status = _normalize_status_value(selected.get("status") or selected.get("interview_status"), selected)
+    return {
+        **application,
+        **selected,
+        "interview_status": status,
+        "interviewStatus": status,
+        "interview_completed": status == "complete",
+        "interviewCompleted": status == "complete",
+        "report_source_attempt_id": selected.get("attempt_id"),
+        "report_source_attempt_number": selected.get("attempt_number"),
+    }
+
+
+def with_public_interview_fields(application: dict) -> dict:
+    if not isinstance(application, dict):
+        return application
+
+    status = _normalize_interview_status(application)
+    report_application = select_report_application(application)
+    return {
+        **application,
+        "interview_status": status,
+        "interviewStatus": status,
+        "interview_completed": status == "complete",
+        "interviewCompleted": status == "complete",
+        "report_available": report_application is not None,
+        "has_report": report_application is not None,
+        "report_status": report_application.get("interview_status") if report_application else "",
+        "report_source_attempt_id": report_application.get("report_source_attempt_id") if report_application else "",
+        "report_source_attempt_number": report_application.get("report_source_attempt_number") if report_application else None,
+    }
 
 
 def _unanswered_answer_record(question: dict, index: int, question_id: str, timestamp: str) -> dict:
@@ -2172,12 +2491,7 @@ def _safe_audio_extension(filename: str | None) -> str:
 
 
 def _is_interview_completed(application: dict) -> bool:
-    return (
-        application.get("interview_completed") is True
-        or application.get("interviewCompleted") is True
-        or str(application.get("interview_status") or "").lower() == "completed"
-        or str(application.get("interviewStatus") or "").lower() == "completed"
-    )
+    return _normalize_interview_status(application) == "complete"
 
 
 def _is_verification_completed(application: dict) -> bool:
@@ -2285,22 +2599,16 @@ def _build_access_response(application: dict) -> dict:
 def _get_schedule_access_status(application: dict, scheduled_at: datetime | None) -> dict:
     if _is_interview_completed(application):
         return {
-            "status": "completed",
+            "status": "complete",
             "message": "You have already completed this interview.",
         }
 
-    current_status = str(application.get("interview_status") or "").lower()
+    current_status = _normalize_interview_status(application)
 
-    if current_status in {"partial", "quit", "interrupted"}:
+    if current_status == "partial":
         return {
             "status": current_status,
             "message": "Your previous interview attempt was interrupted. Please contact HR.",
-        }
-
-    if current_status == "in_progress" and application.get("interview_started_at"):
-        return {
-            "status": "in_progress",
-            "message": "Interview is already in progress.",
         }
 
     if scheduled_at is None:
@@ -2340,7 +2648,7 @@ def _get_schedule_access_status(application: dict, scheduled_at: datetime | None
 
 
 def _with_stale_status(application: dict) -> dict:
-    if str(application.get("interview_status") or "").lower() != "in_progress":
+    if str(application.get("interview_status") or "").lower() not in {"in_progress"}:
         return application
 
     if _is_interview_completed(application):
@@ -2354,7 +2662,7 @@ def _with_stale_status(application: dict) -> dict:
     if (datetime.now() - last_seen).total_seconds() <= HEARTBEAT_TIMEOUT_SECONDS:
         return application
 
-    status = "partial" if _answered_count(application) > 0 else "quit"
+    status = "partial" if _answered_count(application) > 0 else "not_started"
     application_id = application.get("application_id") or application.get("_id")
 
     if not application_id:

@@ -43,7 +43,7 @@ def is_report_ready(application: dict) -> bool:
     return (
         application.get("interview_completed") is True
         or application.get("interviewCompleted") is True
-        or status in {"completed", "partial", "quit", "interrupted"}
+        or status in {"complete", "completed", "partial", "quit", "interrupted"}
     )
 
 
@@ -184,7 +184,7 @@ def _add_group_summary(writer: "_ReportWriter", applications: list[dict]) -> Non
     writer.title("Overall Summary", "Candidate report pack")
 
     completed = [application for application in applications if is_report_ready(application)]
-    completed_only = [application for application in applications if _interview_status_label(application) == "Completed"]
+    completed_only = [application for application in applications if _interview_status_label(application) == "Complete"]
     partial_or_quit = [
         application
         for application in applications
@@ -207,7 +207,7 @@ def _add_group_summary(writer: "_ReportWriter", applications: list[dict]) -> Non
         [
             ("Total Candidates", str(len(applications))),
             ("Completed", str(len(completed_only))),
-            ("Partial / Quit / Interrupted", str(len(partial_or_quit))),
+            ("Partial", str(len(partial_or_quit))),
             ("Passed / Shortlisted", str(len(passed))),
             ("Liveness Passed", str(sum(1 for application in applications if _liveness_summary(application)["status"] == "passed"))),
             ("Liveness Warnings", str(sum(1 for application in applications if _liveness_summary(application)["status"] == "warning"))),
@@ -786,9 +786,9 @@ def _interview_status_label(application: dict) -> str:
     if (
         application.get("interview_completed") is True
         or application.get("interviewCompleted") is True
-        or status.lower() == "completed"
+        or status.lower() in {"complete", "completed"}
     ):
-        return "Completed"
+        return "Complete"
 
     return _format_status(status or "Incomplete")
 

@@ -41,6 +41,6 @@ export function isInterviewLocked(application) {
   return (
     application?.interview_completed === true ||
     application?.interviewCompleted === true ||
-    ["completed", "partial", "quit", "interrupted"].includes(status)
+    ["complete", "completed", "partial"].includes(status)
   );
 }

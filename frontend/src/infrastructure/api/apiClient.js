@@ -1,11 +1,11 @@
-import { API_BASE_URL } from "../../config/apiConfig.js";
+import { getApiBaseUrl } from "../config/configLoader.js";
 
 export function buildApiUrl(path) {
   if (/^https?:\/\//i.test(String(path))) {
     return path;
   }
 
-  return `${API_BASE_URL}${path}`;
+  return `${getApiBaseUrl()}${path}`;
 }
 
 export async function apiRequest(path, options = {}) {

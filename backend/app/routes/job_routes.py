@@ -29,7 +29,7 @@ from app.application.services.application_store_service import (
     save_job,
     delete_job,
 )
-from app.routes.interview_routes import finalize_partial_interview
+from app.routes.interview_routes import finalize_partial_interview, select_report_application, with_public_interview_fields
 
 
 router = APIRouter()
@@ -222,15 +222,17 @@ def download_candidate_report(application_id: str):
 
     application = _finalize_if_partial_or_quit(application)
 
-    if not is_report_ready(application):
+    report_application = select_report_application(application)
+
+    if not report_application or not is_report_ready(report_application):
         raise HTTPException(
             status_code=400,
-            detail="Candidate report is available after a completed, partial, or quit interview attempt.",
+            detail="Candidate report is available after a complete or partial interview attempt.",
         )
 
-    pdf_bytes = generate_candidate_report_pdf(application)
-    filename = report_filename(application)
-    _store_report_pdf(pdf_bytes, filename, application, "candidate_report")
+    pdf_bytes = generate_candidate_report_pdf(report_application)
+    filename = report_filename(report_application)
+    _store_report_pdf(pdf_bytes, filename, report_application, "candidate_report")
     return _pdf_response(pdf_bytes, filename)
 
 
@@ -239,7 +241,7 @@ def download_candidate_reports(payload: BulkReportRequest):
     applications = _resolve_report_applications(payload)
 
     if not applications:
-        raise HTTPException(status_code=400, detail="No completed, partial, or quit candidates selected for report generation.")
+        raise HTTPException(status_code=400, detail="No complete or partial candidate evaluations are available for report generation.")
 
     incomplete = [
         str(application.get("application_id") or application.get("_id") or "unknown")
@@ -250,7 +252,7 @@ def download_candidate_reports(payload: BulkReportRequest):
     if incomplete:
         raise HTTPException(
             status_code=400,
-            detail=f"Reports can be generated only for completed, partial, or quit interviews: {', '.join(incomplete)}",
+            detail=f"Reports can be generated only for complete or partial interviews: {', '.join(incomplete)}",
         )
 
     pdf_bytes = generate_candidate_reports_pdf(applications)
@@ -358,7 +360,8 @@ def _resolve_report_applications(payload: BulkReportRequest) -> list[dict]:
             application = get_application_by_id(application_id)
 
             if application:
-                applications.append(_finalize_if_partial_or_quit(application))
+                report_application = select_report_application(_finalize_if_partial_or_quit(application))
+                applications.append(report_application or _finalize_if_partial_or_quit(application))
             else:
                 missing_ids.append(application_id)
 
@@ -374,15 +377,20 @@ def _resolve_report_applications(payload: BulkReportRequest) -> list[dict]:
 
     return [
         _finalize_if_partial_or_quit(application)
-        for application in list_applications()
-        if str(application.get("job_id") or "") == job_id and is_report_ready(application)
+        for application in (
+            select_report_application(_finalize_if_partial_or_quit(application))
+            for application in list_applications()
+            if str(application.get("job_id") or "") == job_id
+        )
+        if application and is_report_ready(application)
     ]
 
 
 def _finalize_if_partial_or_quit(application: dict) -> dict:
+    application = with_public_interview_fields(application)
     status = str(application.get("interview_status") or application.get("interviewStatus") or "").lower()
 
-    if status not in {"partial", "quit", "interrupted"}:
+    if status != "partial":
         return application
 
     application_id = str(application.get("application_id") or application.get("_id") or "")
@@ -390,7 +398,7 @@ def _finalize_if_partial_or_quit(application: dict) -> dict:
     if not application_id:
         return application
 
-    return finalize_partial_interview(application_id, status=status) or application
+    return with_public_interview_fields(finalize_partial_interview(application_id, status=status) or application)
 
 
 def _parse_quick_select_count(value) -> int | None:

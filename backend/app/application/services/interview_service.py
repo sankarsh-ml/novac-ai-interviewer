@@ -14,3 +14,6 @@ def get_link_by_token(token: str) -> dict | None:
 
 def mark_link_used(token: str) -> None:
     interview_repository.mark_link_used(token)
+
+def delete_interview_for_candidate(candidate_id: str) -> None:
+    interview_repository.delete_interview_for_candidate(candidate_id)

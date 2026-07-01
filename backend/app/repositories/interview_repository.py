@@ -38,3 +38,11 @@ def mark_link_used(token: str) -> None:
         {"$or": [{"token": token}, {"interviewLinkToken": token}]},
         {"$set": {"used": True, "updatedAt": datetime.now().isoformat()}},
     )
+
+def delete_interview_for_candidate(candidate_id: str) -> None:
+    if not candidate_id:
+        return
+
+    get_database().interviews.delete_one(
+        {"candidateId": candidate_id}
+    )

@@ -39,6 +39,7 @@ from app.application.services.interview_service import (
     get_link_by_token,
     mark_link_used,
     upsert_interview_for_candidate,
+    delete_interview_for_candidate,
 )
 from app.core.config import get_path
 
@@ -133,6 +134,7 @@ class ConfigureQuestionsRequest(BaseModel):
     identityConfig: IdentityConfigRequest | dict | None = None
     identity_verification_required: bool | None = None
     identityVerificationRequired: bool | None = None
+    reschedule: bool = False
 
 
 @router.post("/create-link")
@@ -285,6 +287,40 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
         "identity_config": identity_config,
     }
 
+@router.post("/reschedule-link")
+def reschedule_interview_link(payload: CreateInterviewLinkRequest):
+    application = get_resume_application(payload.application_id)
+    
+    if not application:
+        raise HTTPException(status_code=404, detail="Application not found")
+
+    delete_interview_for_candidate(payload.application_id)
+    # Candidate details remain the same
+    payload.candidate_name = (
+        payload.candidate_name
+        or application.get("candidate_name")
+        or _get_candidate_name(application)
+    )
+
+    payload.email = (
+        payload.email
+        or application.get("email", "")
+    )
+
+    # Remove old interview link information
+    update_application(
+        payload.application_id,
+        {
+            "interview_link": "",
+            "verification_link": "",
+            "interview_token": "",
+            "interview_link_generated": False,
+            "interview_link_generated_at": None,
+        },
+    )
+
+    # Generate a brand-new interview link
+    return create_interview_link(payload)
 
 def _existing_interview_link_response(application: dict, existing_link: str) -> dict:
     identity_config = build_identity_config(application)
@@ -457,7 +493,17 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
     if _is_interview_completed(application):
         raise HTTPException(status_code=400, detail="Interview already completed")
 
-    if application.get("interview_link_generated") is True or application.get("interview_link") or application.get("verification_link"):
+    already_generated = (
+    application.get("interview_link_generated") is True
+    or application.get("interview_link")
+    or application.get("verification_link")
+)
+
+    print("========== CONFIGURE QUESTIONS ==========")
+    print("Payload:", payload.model_dump())
+    print("Reschedule:", payload.reschedule)
+    print("Already Generated:", already_generated)
+    if already_generated and not payload.reschedule:
         raise HTTPException(
             status_code=400,
             detail="Interview link has already been generated. Use Copy Link from the shortlisted candidates page.",

@@ -291,6 +291,7 @@ function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
                     <td>
 
                       {isLinkGenerated(app) && !isInterviewLocked(app) ? (
+                        <>
                         <button
                           className="send-button copy"
                           type="button"
@@ -298,13 +299,26 @@ function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
                         >
                           {copiedLinkId === app.application_id ? "Copied" : "Copy Link"}
                         </button>
+
+                        <button
+                            className="send-button"
+                            type="button"
+                            onClick={() =>
+                              onConfigureInterview?.(app, "reschedule")
+                            }
+                          >
+                            Reschedule
+                          </button>
+                      </>
                       ) : isInterviewLocked(app) ? (
                         <span className="muted-cell">Unavailable</span>
                       ) : (
                         <button
                           className="send-button"
                           type="button"
-                          onClick={() => onConfigureInterview?.(app)}
+                          onClick={() =>
+                            onConfigureInterview?.(app, "generate")
+                          }
                         >
                           Generate Link
                         </button>

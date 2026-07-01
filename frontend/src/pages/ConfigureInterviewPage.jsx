@@ -3,7 +3,7 @@ import "../styles/ConfigureInterviewPage.css";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
-function ConfigureInterviewPage({ applicationId, onBack }) {
+function ConfigureInterviewPage({applicationId,onBack,mode = "generate",}) {
   const [application, setApplication] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [filters, setFilters] = useState({
@@ -27,7 +27,9 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
   const [generatedLink, setGeneratedLink] = useState("");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-
+  const isReschedule = mode === "reschedule";
+  console.log("MODE =", mode);
+  console.log("IS RESCHEDULE =", isReschedule);
   useEffect(() => {
     if (!applicationId) {
       setLoading(false);
@@ -123,7 +125,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
     requiredCount > 0 &&
     (isQwenMode ? qwenSplitTotal > 0 && qwenSplitMatchesCount : selectedIds.length === requiredCount) &&
     !isInterviewLocked(application) &&
-    !hasGeneratedLink;
+    (isReschedule || !hasGeneratedLink);
 
   const toggleQuestion = (question) => {
     const questionId = getQuestionId(question);
@@ -133,7 +135,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
     }
 
     if (selectedIds.includes(questionId)) {
-      if (hasGeneratedLink) {
+      if (hasGeneratedLink && !isReschedule) {
         setMessage("Interview link has already been generated. Selected questions are frozen.");
         return;
       }
@@ -175,12 +177,15 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
   };
 
   const generateLink = async () => {
+    console.log("Generate called");
+    console.log("MODE =", mode);
+    console.log("IS RESCHEDULE =", isReschedule);
     if (isQuestionBankMode && selectedExceedsLimit) {
       setMessage("Selected questions exceed the new limit. Please remove extra questions.");
       return;
     }
 
-    if (hasGeneratedLink) {
+    if (hasGeneratedLink && !isReschedule) {
       setMessage("Interview link has already been generated. Use Copy Link from the shortlisted candidates page.");
       return;
     }
@@ -223,6 +228,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
           selectedQuestionIds: isQuestionBankMode ? selectedIds : [],
           difficultySplit: isQwenMode ? qwenSplit : null,
           filters_used: filters,
+          reschedule: isReschedule,
         }),
       });
       const configureData = await configureResponse.json();
@@ -238,7 +244,10 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
         throw new Error(configureData.detail || configureData.message || "Could not save selected questions.");
       }
 
-      const linkResponse = await fetch(`${API_BASE_URL}/api/interview/create-link`, {
+      const endpoint = isReschedule? "reschedule-link": "create-link";
+      console.log("Mode:", mode);
+      console.log("Endpoint:", endpoint);
+      const linkResponse = await fetch(`${API_BASE_URL}/api/interview/${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -298,14 +307,14 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
         </header>
 
         <section className="configure-controls">
-          <input type="date" value={interviewDate} disabled={hasGeneratedLink} onChange={(event) => setInterviewDate(event.target.value)} />
-          <input type="time" value={interviewTime} disabled={hasGeneratedLink} onChange={(event) => setInterviewTime(event.target.value)} />
+          <input type="date" value={interviewDate} disabled={hasGeneratedLink && !isReschedule} onChange={(event) => setInterviewDate(event.target.value)} />
+          <input type="time" value={interviewTime} disabled={hasGeneratedLink && !isReschedule} onChange={(event) => setInterviewTime(event.target.value)} />
           <input
             type="number"
             min="1"
             placeholder={isQwenMode ? "Total Questions" : "Number of Questions"}
             value={questionCount}
-            disabled={hasGeneratedLink}
+            disabled={hasGeneratedLink && !isReschedule}
             onChange={(event) => updateQuestionCount(event.target.value)}
           />
         </section>
@@ -319,7 +328,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
                 name="question-source"
                 value="question_bank"
                 checked={isQuestionBankMode}
-                disabled={hasGeneratedLink || questionBankCount === 0}
+                disabled={(hasGeneratedLink && !isReschedule) || questionBankCount === 0}
                 onChange={() => {
                   setQuestionSource("question_bank");
                   setMessage("");
@@ -333,7 +342,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
                 name="question-source"
                 value="qwen_generated"
                 checked={isQwenMode}
-                disabled={hasGeneratedLink}
+                disabled={hasGeneratedLink && !isReschedule}
                 onChange={() => {
                   setQuestionSource("qwen_generated");
                   setSelectedIds([]);
@@ -368,7 +377,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
                   min="0"
                   step="1"
                   value={difficultySplit.easy}
-                  disabled={hasGeneratedLink}
+                  disabled={hasGeneratedLink && !isReschedule}
                   onChange={(event) => setDifficultySplit({ ...difficultySplit, easy: event.target.value })}
                 />
               </label>
@@ -379,7 +388,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
                   min="0"
                   step="1"
                   value={difficultySplit.medium}
-                  disabled={hasGeneratedLink}
+                  disabled={hasGeneratedLink && !isReschedule}
                   onChange={(event) => setDifficultySplit({ ...difficultySplit, medium: event.target.value })}
                 />
               </label>
@@ -390,7 +399,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
                   min="0"
                   step="1"
                   value={difficultySplit.hard}
-                  disabled={hasGeneratedLink}
+                  disabled={hasGeneratedLink && !isReschedule}
                   onChange={(event) => setDifficultySplit({ ...difficultySplit, hard: event.target.value })}
                 />
               </label>
@@ -405,9 +414,9 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
         {isQuestionBankMode && !selectedExceedsLimit && selectedAtLimit && !hasGeneratedLink && (
           <p className="configure-message">You have already selected the required number of questions. Remove one to add another.</p>
         )}
-        {hasGeneratedLink && <p className="configure-message">Interview link has already been generated. Selected questions and schedule are locked.</p>}
+        {hasGeneratedLink && !isReschedule && (<p className="configure-message">Interview link has already been generated. Selected questions and schedule are locked.</p>)}
         {message && <p className="configure-message">{message}</p>}
-        {generatedLink && <p className="generated-link">{generatedLink}</p>}
+        {generatedLink && !isReschedule && (<p className="generated-link">{generatedLink}</p>)}
 
         <section className="configure-layout">
           {isQuestionBankMode && (
@@ -438,14 +447,14 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
                   ))}
                 </select>
               )}
-              <button className="report-button" type="button" onClick={autoSelect} disabled={hasGeneratedLink}>Auto Select</button>
+              <button className="report-button" type="button" onClick={autoSelect} disabled={hasGeneratedLink && !isReschedule}>Auto Select</button>
             </div>
 
             <div className="question-results">
               {filteredQuestions.map((question) => {
                 const questionId = getQuestionId(question);
                 const selected = selectedIds.includes(questionId);
-                const questionButtonDisabled = hasGeneratedLink || (!selected && (selectedAtLimit || requiredCount <= 0));
+                const questionButtonDisabled =(hasGeneratedLink && !isReschedule) || (!selected && (selectedAtLimit || requiredCount <= 0));
 
                 return (
                   <article className="configure-question-card" key={questionId}>
@@ -488,7 +497,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
                   <strong>{question.question}</strong>
                   <small>{formatDifficulty(question.difficulty)} | {getQuestionArea(question)}</small>
                 </div>
-                <button type="button" disabled={hasGeneratedLink} onClick={() => toggleQuestion(question)}>Remove</button>
+                <button type="button" disabled={hasGeneratedLink && !isReschedule} onClick={() => toggleQuestion(question)}>Remove</button>
               </article>
             ))}
             {!selectedQuestions.length && <p>No questions selected.</p>}
@@ -535,7 +544,7 @@ function isInterviewLocked(application) {
   return (
     application?.interview_completed === true ||
     application?.interviewCompleted === true ||
-    ["completed", "partial", "quit"].includes(status)
+    ["completed","quit"].includes(status)
   );
 }
 

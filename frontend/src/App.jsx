@@ -34,6 +34,7 @@ function App() {
   const [isCameraRunning, setIsCameraRunning] = useState(false);
   const cameraStreamRef = useRef(null);
   const [selectedResume, setSelectedResume] = useState(null);
+  const [interviewMode, setInterviewMode] = useState("generate");
 
   useEffect(() => {
     const stopOnUnload = () => {
@@ -386,14 +387,15 @@ function App() {
       <ShortlistedCandidatesPage
           job={selectedJob}
           onBack={() => setCurrentPage("job-applications")}
-          onConfigureInterview={(application) => {
-            setSelectedInterviewApplication(application);
-            window.history.replaceState(
+          onConfigureInterview={(application, mode = "generate") => {
+          setInterviewMode(mode);
+          setSelectedInterviewApplication(application);
+          window.history.replaceState(
               null,
               "",
               `/configure-interview/${encodeURIComponent(application.application_id)}`
-            );
-            setCurrentPage("configure-interview");
+          );
+          setCurrentPage("configure-interview");
           }}
         />
     );
@@ -403,6 +405,7 @@ function App() {
     return (
       <ConfigureInterviewPage
         applicationId={selectedInterviewApplication?.application_id}
+        mode={interviewMode}
         onBack={() => {
           window.history.replaceState(null, "", "/");
           setCurrentPage(selectedJob ? "shortlisted" : "current-jobs");

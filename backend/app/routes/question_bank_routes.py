@@ -6,7 +6,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 
-from app.services.question_bank_service import (
+from app.application.services.question_bank_service import (
     filter_question_bank_questions,
     get_question_bank_filters,
     load_question_bank,

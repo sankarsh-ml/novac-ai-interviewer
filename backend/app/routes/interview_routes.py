@@ -4,7 +4,6 @@ import uuid
 import json
 import os
 import base64
-import tempfile
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any
@@ -13,18 +12,18 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from app.services.answer_evaluation_service import evaluate_answer_with_qwen, normalize_score
-from app.services.db_service import get_resume_application, update_application
-from app.services.face_verification_service import (
+from app.application.services.answer_evaluation_service import evaluate_answer_with_qwen, normalize_score
+from app.application.services.application_store_service import get_resume_application, update_application
+from app.application.services.face_verification_service import (
     DEFAULT_FACE_VERIFY_THRESHOLD,
     analyze_face_image_bytes,
     cosine_similarity,
     get_dependency_status,
     get_face_app,
+    materialize_file_from_mongo,
     verify_faces,
 )
-from app.services.file_storage_service import materialize_file_from_mongo
-from app.services.identity_config_service import (
+from app.application.services.identity_config_service import (
     GOVERNMENT_ID_SOURCE,
     RESUME_PHOTO_REQUIRED_MESSAGE,
     RESUME_PHOTO_SOURCE,
@@ -32,20 +31,25 @@ from app.services.identity_config_service import (
     normalize_requested_identity_config,
     requires_government_id,
 )
-from app.services.mongo_service import get_database, public_document
-from app.services.question_generation_service import generate_interview_questions, generate_qwen_interview_questions
-from app.services.question_bank_service import load_question_bank
-from app.services.qwen_service import is_qwen_available
-from app.services.whisper_service import transcribe_audio
+from app.application.services.question_generation_service import generate_interview_questions, generate_qwen_interview_questions
+from app.application.services.question_bank_service import load_question_bank
+from app.application.services.qwen_service import is_qwen_available
+from app.application.services.whisper_service import transcribe_audio
+from app.application.services.interview_service import (
+    get_link_by_token,
+    mark_link_used,
+    upsert_interview_for_candidate,
+)
+from app.core.config import get_path
 
 
 router = APIRouter()
 
-APP_DIR = Path(__file__).resolve().parents[1]
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-LIVE_FRAME_DIR = APP_DIR / "storage" / "live_frames"
+PROJECT_ROOT = get_path("project_root")
+APP_ROOT = get_path("backend_root") / "app"
+LIVE_FRAME_DIR = get_path("live_frame_temp_dir")
 LIVE_FRAME_DIR.mkdir(parents=True, exist_ok=True)
-CANDIDATE_STORAGE_DIR = APP_DIR / "storage" / "candidates"
+CANDIDATE_STORAGE_DIR = get_path("candidate_temp_dir")
 JOIN_WINDOW_MINUTES = 60
 HEARTBEAT_TIMEOUT_SECONDS = 120
 
@@ -228,23 +232,17 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
         "identity_config": identity_config,
     }
 
-    get_database().interviews.update_one(
-        {"candidateId": payload.application_id},
+    upsert_interview_for_candidate(
+        payload.application_id,
         {
-            "$set": {
-                **data,
-                "interviewId": data.get("interviewId") or token,
-                "candidateId": payload.application_id,
-                "application_id": payload.application_id,
-                "jobId": application.get("jobId") or application.get("job_id"),
-                "job_id": application.get("job_id") or application.get("jobId"),
-                "interviewLinkToken": token,
-                "status": "configured",
-                "updatedAt": datetime.now().isoformat(),
-            },
-            "$setOnInsert": {"createdAt": datetime.now().isoformat()},
+            **data,
+            "interviewId": data.get("interviewId") or token,
+            "jobId": application.get("jobId") or application.get("job_id"),
+            "job_id": application.get("job_id") or application.get("jobId"),
+            "interviewLinkToken": token,
+            "status": "configured",
         },
-        upsert=True,
+        {"createdAt": datetime.now().isoformat()},
     )
     print(f"[Storage] Saved interview to MongoDB interviewId={token}")
     update_application(
@@ -1605,7 +1603,7 @@ def _existing_path(path_value, checked_paths=None, source=None):
         _record_checked_path(checked_paths, source, path_value, relative_candidate, True)
         return relative_candidate
 
-    app_relative_candidate = APP_DIR / candidate
+    app_relative_candidate = APP_ROOT / candidate
 
     if app_relative_candidate.exists():
         _record_checked_path(checked_paths, source, path_value, app_relative_candidate, True)
@@ -1895,7 +1893,7 @@ def _log_question_load(application: dict, question_payload: dict) -> None:
 def _is_temp_path(path_value) -> bool:
     try:
         path = Path(path_value).resolve()
-        temp_root = Path(tempfile.gettempdir()).resolve()
+        temp_root = get_path("temp_dir").resolve()
     except Exception:
         return False
 
@@ -2636,24 +2634,11 @@ def _normalize_expiry_date(value: str | None) -> str:
 
 
 def _load_link_data(token: str) -> dict | None:
-    if not token:
-        return None
-
-    document = get_database().interviews.find_one(
-        {"$or": [{"token": token}, {"interviewLinkToken": token}]}
-    )
-    data = public_document(document)
-    return data if isinstance(data, dict) else None
+    return get_link_by_token(token)
 
 
 def _mark_link_used(token: str) -> None:
-    if not token:
-        return
-
-    get_database().interviews.update_one(
-        {"$or": [{"token": token}, {"interviewLinkToken": token}]},
-        {"$set": {"used": True, "updatedAt": datetime.now().isoformat()}},
-    )
+    mark_link_used(token)
 
 
 def _has_current_question_contract(question_payload: dict) -> bool:

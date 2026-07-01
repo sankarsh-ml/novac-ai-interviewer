@@ -8,14 +8,17 @@ from io import BytesIO
 from fastapi.responses import Response
 from fastapi import HTTPException
 
-from app.services.candidate_report_service import (
+from app.application.services.report_service import (
     generate_candidate_report_pdf,
     generate_candidate_reports_pdf,
     group_report_filename,
     is_report_ready,
     report_filename,
+    read_file_from_mongo,
+    save_file_to_mongo,
+    upsert_report_metadata,
 )
-from app.services.db_service import (
+from app.application.services.application_store_service import (
     delete_application,
     delete_job_records,
     get_all_jobs,
@@ -26,8 +29,6 @@ from app.services.db_service import (
     save_job,
     delete_job,
 )
-from app.services.file_storage_service import read_file_from_mongo, save_file_to_mongo
-from app.services.mongo_service import get_database
 from app.routes.interview_routes import finalize_partial_interview
 
 
@@ -450,21 +451,18 @@ def _store_report_pdf(pdf_bytes: bytes, filename: str, application: dict, report
         },
     )
     report_id = f"{report_type}:{application.get('application_id') or application.get('job_id') or file_id}"
-    get_database().reports.update_one(
-        {"reportId": report_id},
+    upsert_report_metadata(
+        report_id,
         {
-            "$set": {
-                "reportId": report_id,
-                "candidateId": application.get("application_id"),
-                "application_id": application.get("application_id"),
-                "jobId": application.get("job_id") or application.get("jobId"),
-                "job_id": application.get("job_id") or application.get("jobId"),
-                "reportType": report_type,
-                "report_type": report_type,
-                "reportFileId": file_id,
-                "report_file_id": file_id,
-                "metadata": {"filename": filename},
-            }
+            "reportId": report_id,
+            "candidateId": application.get("application_id"),
+            "application_id": application.get("application_id"),
+            "jobId": application.get("job_id") or application.get("jobId"),
+            "job_id": application.get("job_id") or application.get("jobId"),
+            "reportType": report_type,
+            "report_type": report_type,
+            "reportFileId": file_id,
+            "report_file_id": file_id,
+            "metadata": {"filename": filename},
         },
-        upsert=True,
     )

@@ -9,23 +9,22 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app.services.db_service import get_resume_application, update_application
-from app.services.file_storage_service import save_file_to_mongo, save_path_to_mongo
-from app.services.identity_config_service import (
+from app.application.services.application_store_service import get_resume_application, update_application
+from app.application.services.identity_config_service import (
     GOVERNMENT_ID_SOURCE,
     RESUME_PHOTO_SOURCE,
     build_identity_config,
     requires_government_id,
 )
-from app.services.kyc_service import verify_indian_id_for_application
+from app.application.services.identity_service import save_file_to_mongo, save_path_to_mongo, verify_indian_id_for_application
+from app.core.config import get_path
 
 
 router = APIRouter()
 
-APP_DIR = Path(__file__).resolve().parents[1]
-GOVERNMENT_ID_UPLOAD_DIR = APP_DIR / "storage" / "government_id"
+GOVERNMENT_ID_UPLOAD_DIR = get_path("id_temp_dir")
 GOVERNMENT_ID_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-CANDIDATE_STORAGE_DIR = APP_DIR / "storage" / "candidates"
+CANDIDATE_STORAGE_DIR = get_path("candidate_temp_dir")
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
 

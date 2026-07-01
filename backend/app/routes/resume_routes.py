@@ -8,23 +8,24 @@ import uuid
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.routes.ats_routes import score_resume
-from app.services.file_storage_service import save_file_to_mongo, save_path_to_mongo
-from app.services.db_service import get_application_by_id, list_applications, save_resume_application
-from app.services.resume_parser import (
+from app.application.services.application_store_service import get_application_by_id, list_applications, save_resume_application
+from app.application.services.resume_service import (
     clean_text,
     extract_candidate_name,
     extract_resume_photo,
     extract_sections,
     extract_text_from_pdf,
+    save_file_to_mongo,
+    save_path_to_mongo,
 )
+from app.core.config import get_path
 
 
 router = APIRouter()
 
-APP_DIR = Path(__file__).resolve().parents[1]
-RESUME_STORAGE_DIR = APP_DIR / "storage" / "resumes"
-RESUME_PHOTO_STORAGE_DIR = APP_DIR / "storage" / "resume_photos"
-CANDIDATE_STORAGE_DIR = APP_DIR / "storage" / "candidates"
+RESUME_STORAGE_DIR = get_path("resume_temp_dir")
+RESUME_PHOTO_STORAGE_DIR = get_path("resume_photo_temp_dir")
+CANDIDATE_STORAGE_DIR = get_path("candidate_temp_dir")
 
 
 def extract_email(text: str) -> str:

@@ -9,8 +9,8 @@ from app.routes.kyc_routes import router as kyc_router
 from app.routes.question_bank_routes import router as question_bank_router
 from app.routes.resume_routes import router as resume_router
 from app.routes.admin_routes import router as admin_router
-from app.services.auth_service import seed_admin_from_env_if_empty
-from app.services.mongo_service import DatabaseUnavailableError, close_mongo, get_database
+from app.application.services.admin_service import seed_default_admin
+from app.infrastructure.database.mongo_service import DatabaseUnavailableError, close_mongo, get_database
 
 app = FastAPI(title="Resume Text Extraction API")
 
@@ -40,7 +40,7 @@ app.include_router(admin_router)
 @app.on_event("startup")
 def startup_event():
     get_database()
-    seed_admin_from_env_if_empty()
+    seed_default_admin()
 
 
 @app.on_event("shutdown")

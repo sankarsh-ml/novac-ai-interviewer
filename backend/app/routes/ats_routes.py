@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from app.services.ats_engine import calculate_ats
-from app.services.db_service import (
+from app.application.services.ats_service import calculate_ats
+from app.application.services.application_store_service import (
     get_application_by_id,
     get_job_by_id,
     update_application,

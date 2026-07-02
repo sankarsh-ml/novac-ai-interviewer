@@ -3,6 +3,7 @@ import { endpoints } from "../config/endpoints.js";
 
 export function getReport(applicationId) {
   return apiRequest(endpoints.candidateReport(applicationId), {
+    auth: "admin",
     method: "GET",
     responseType: "blob",
   });
@@ -13,6 +14,7 @@ export const downloadReport = getReport;
 
 export function getBulkReports(jobId, applicationIds) {
   return apiRequest(endpoints.reports, {
+    auth: "admin",
     method: "POST",
     body: {
       application_ids: applicationIds,

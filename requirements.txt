@@ -1,13 +1,20 @@
-# Main FastAPI backend
+# Main FastAPI backend (Python 3.11 recommended)
 fastapi==0.137.2
 uvicorn==0.49.0
 python-multipart==0.0.32
 pydantic==2.13.4
 requests==2.32.5
 pymongo==4.15.4
+python-jose[cryptography]>=3.3.0,<4.0.0
 
 # Resume parsing / PDF handling
 PyMuPDF==1.27.2.3
+
+# ATS semantic matching
+sentence-transformers>=3.0.0,<4.0.0
+
+# Voice transcription
+faster-whisper>=1.1.0,<2.0.0
 
 # Face verification
 insightface==1.0.1
@@ -15,8 +22,6 @@ numpy==1.26.4
 onnxruntime==1.27.0
 opencv-python==4.10.0.84
 
-# Indian ID validator helper packages
-# The validator itself runs in id_venv via setup_id_venv.bat.
-huggingface_hub==1.20.1
-matplotlib==3.10.9
-ultralytics==8.4.71
+# Indian ID validator runs in a separate id_venv via setup_id_venv.bat.
+# Do not install PaddleOCR/PaddlePaddle into the main backend venv unless you
+# intentionally want a combined environment.

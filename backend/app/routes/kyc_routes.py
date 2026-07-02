@@ -4,12 +4,13 @@ import traceback
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.application.services.application_store_service import get_resume_application, update_application
+from app.application.services.candidate_auth_service import assert_candidate_application, require_candidate_jwt
 from app.application.services.identity_config_service import (
     GOVERNMENT_ID_SOURCE,
     RESUME_PHOTO_SOURCE,
@@ -55,7 +56,8 @@ def _kyc_json_response(payload: dict, status_code: int = 200) -> JSONResponse:
 
 
 @router.get("/candidate/{application_id}")
-def get_candidate_verification_data(application_id: str):
+def get_candidate_verification_data(application_id: str, current_candidate: dict = Depends(require_candidate_jwt)):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -68,7 +70,8 @@ def get_candidate_verification_data(application_id: str):
 
 
 @router.get("/verification-status/{application_id}")
-def get_verification_status(application_id: str):
+def get_verification_status(application_id: str, current_candidate: dict = Depends(require_candidate_jwt)):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -95,7 +98,12 @@ def get_verification_status(application_id: str):
 
 
 @router.post("/verification/mark/{application_id}")
-def mark_candidate_verified(application_id: str, payload: MarkVerifiedRequest):
+def mark_candidate_verified(
+    application_id: str,
+    payload: MarkVerifiedRequest,
+    current_candidate: dict = Depends(require_candidate_jwt),
+):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -174,7 +182,12 @@ def mark_candidate_verified(application_id: str, payload: MarkVerifiedRequest):
 
 @router.post("/identity/upload/{application_id}")
 @router.post("/aadhaar/upload/{application_id}")
-async def upload_indian_government_id(application_id: str, aadhaar_file: UploadFile = File(...)):
+async def upload_indian_government_id(
+    application_id: str,
+    current_candidate: dict = Depends(require_candidate_jwt),
+    aadhaar_file: UploadFile = File(...),
+):
+    application_id = assert_candidate_application(application_id, current_candidate)
     candidate_dir = None
 
     try:

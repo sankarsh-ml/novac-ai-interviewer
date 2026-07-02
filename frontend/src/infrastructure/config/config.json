@@ -4,6 +4,7 @@
     "timeoutMs": 30000,
     "endpoints": {
       "adminLogin": "/admin/login",
+      "candidateToken": "/candidate/token",
       "jobs": "/api/hr/jobs",
       "job": "/api/hr/jobs/{jobId}",
       "jobApplications": "/api/hr/jobs/{jobId}/applications",

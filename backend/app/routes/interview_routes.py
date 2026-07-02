@@ -8,12 +8,14 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.application.services.answer_evaluation_service import evaluate_answer_with_qwen, normalize_score
+from app.application.services.admin_service import require_admin
 from app.application.services.application_store_service import get_resume_application, update_application
+from app.application.services.candidate_auth_service import assert_candidate_application, require_candidate_jwt
 from app.application.services.face_verification_service import (
     DEFAULT_FACE_VERIFY_THRESHOLD,
     analyze_face_image_bytes,
@@ -159,7 +161,7 @@ class RescheduleInterviewRequest(ConfigureQuestionsRequest):
     duration_minutes: Any = None
 
 
-@router.post("/create-link")
+@router.post("/create-link", dependencies=[Depends(require_admin)])
 def create_interview_link(payload: CreateInterviewLinkRequest):
     application = get_resume_application(payload.application_id)
 
@@ -324,12 +326,12 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
     }
 
 
-@router.post("/reschedule-link")
+@router.post("/reschedule-link", dependencies=[Depends(require_admin)])
 def reschedule_interview_link(payload: RescheduleInterviewRequest):
     return _reschedule_interview_attempt(payload, payload.interviewId or payload.interview_id)
 
 
-@router.post("/{interview_id}/reschedule")
+@router.post("/{interview_id}/reschedule", dependencies=[Depends(require_admin)])
 def reschedule_interview_by_id(interview_id: str, payload: RescheduleInterviewRequest):
     return _reschedule_interview_attempt(payload, interview_id)
 
@@ -789,7 +791,7 @@ def check_interview_access_status(application_id: str):
     return check_interview_access(application_id)
 
 
-@router.get("/{application_id}/configure-data")
+@router.get("/{application_id}/configure-data", dependencies=[Depends(require_admin)])
 def get_interview_configure_data(application_id: str):
     application = get_resume_application(application_id)
 
@@ -868,7 +870,7 @@ def get_interview_configure_data(application_id: str):
     }
 
 
-@router.post("/{application_id}/configure-questions")
+@router.post("/{application_id}/configure-questions", dependencies=[Depends(require_admin)])
 def configure_interview_questions(application_id: str, payload: ConfigureQuestionsRequest):
     application = get_resume_application(application_id)
 
@@ -1087,7 +1089,7 @@ def configure_interview_questions(application_id: str, payload: ConfigureQuestio
     }
 
 
-@router.get("/{application_id}/configured-questions")
+@router.get("/{application_id}/configured-questions", dependencies=[Depends(require_admin)])
 def get_configured_interview_questions(application_id: str):
     application = get_resume_application(application_id)
 
@@ -1104,7 +1106,12 @@ def get_configured_interview_questions(application_id: str):
 
 
 @router.post("/face-verify/{application_id}")
-async def face_verify(application_id: str, frame: UploadFile = File(...)):
+async def face_verify(
+    application_id: str,
+    current_candidate: dict = Depends(require_candidate_jwt),
+    frame: UploadFile = File(...),
+):
+    application_id = assert_candidate_application(application_id, current_candidate)
     live_frame_path = None
     reference_path = None
 
@@ -1281,7 +1288,8 @@ def qwen_health():
 
 
 @router.get("/questions/{application_id}")
-def get_interview_questions(application_id: str):
+def get_interview_questions(application_id: str, current_candidate: dict = Depends(require_candidate_jwt)):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -1305,12 +1313,13 @@ def get_interview_questions(application_id: str):
 
 
 @router.get("/{application_id}/questions")
-def get_candidate_interview_questions(application_id: str):
-    return get_interview_questions(application_id)
+def get_candidate_interview_questions(application_id: str, current_candidate: dict = Depends(require_candidate_jwt)):
+    return get_interview_questions(application_id, current_candidate)
 
 
 @router.post("/{application_id}/start")
-def start_interview(application_id: str):
+def start_interview(application_id: str, current_candidate: dict = Depends(require_candidate_jwt)):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -1389,7 +1398,8 @@ def start_interview(application_id: str):
 
 
 @router.post("/{application_id}/heartbeat")
-def heartbeat_interview(application_id: str):
+def heartbeat_interview(application_id: str, current_candidate: dict = Depends(require_candidate_jwt)):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -1403,7 +1413,8 @@ def heartbeat_interview(application_id: str):
 
 
 @router.post("/{application_id}/quit")
-def quit_interview(application_id: str):
+def quit_interview(application_id: str, current_candidate: dict = Depends(require_candidate_jwt)):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -1425,7 +1436,12 @@ def quit_interview(application_id: str):
 
 
 @router.post("/{application_id}/answers/save")
-def save_interview_answer(application_id: str, payload: AnswerSaveRequest):
+def save_interview_answer(
+    application_id: str,
+    payload: AnswerSaveRequest,
+    current_candidate: dict = Depends(require_candidate_jwt),
+):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -1449,7 +1465,12 @@ def save_interview_answer(application_id: str, payload: AnswerSaveRequest):
 
 
 @router.post("/{application_id}/liveness/reference")
-def save_liveness_reference(application_id: str, payload: LivenessImageRequest):
+def save_liveness_reference(
+    application_id: str,
+    payload: LivenessImageRequest,
+    current_candidate: dict = Depends(require_candidate_jwt),
+):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -1484,7 +1505,12 @@ def save_liveness_reference(application_id: str, payload: LivenessImageRequest):
 
 
 @router.post("/{application_id}/liveness/check")
-def check_liveness(application_id: str, payload: LivenessImageRequest):
+def check_liveness(
+    application_id: str,
+    payload: LivenessImageRequest,
+    current_candidate: dict = Depends(require_candidate_jwt),
+):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -1529,12 +1555,17 @@ def check_liveness(application_id: str, payload: LivenessImageRequest):
 
 
 @router.post("/{application_id}/complete")
-def complete_interview_direct(application_id: str):
-    return complete_interview(application_id)
+def complete_interview_direct(application_id: str, current_candidate: dict = Depends(require_candidate_jwt)):
+    return complete_interview(application_id, current_candidate)
 
 
 @router.post("/{application_id}/liveness-event")
-def save_liveness_event(application_id: str, payload: LivenessEventRequest):
+def save_liveness_event(
+    application_id: str,
+    payload: LivenessEventRequest,
+    current_candidate: dict = Depends(require_candidate_jwt),
+):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -1571,7 +1602,7 @@ def save_liveness_event(application_id: str, payload: LivenessEventRequest):
     }
 
 
-@router.post("/questions/{application_id}/regenerate")
+@router.post("/questions/{application_id}/regenerate", dependencies=[Depends(require_admin)])
 def regenerate_interview_questions(application_id: str):
     application = get_resume_application(application_id)
 
@@ -1599,7 +1630,12 @@ def regenerate_interview_questions(application_id: str):
 
 
 @router.post("/{application_id}/transcribe")
-async def transcribe_interview_audio(application_id: str, audio: UploadFile = File(...)):
+async def transcribe_interview_audio(
+    application_id: str,
+    current_candidate: dict = Depends(require_candidate_jwt),
+    audio: UploadFile = File(...),
+):
+    application_id = assert_candidate_application(application_id, current_candidate)
     print(f"[Interview transcribe] audio received application_id={application_id} filename={audio.filename}")
     application = get_resume_application(application_id)
 
@@ -1652,7 +1688,12 @@ async def transcribe_interview_audio(application_id: str, audio: UploadFile = Fi
 
 
 @router.post("/questions/{application_id}/evaluate")
-def evaluate_interview_answer(application_id: str, request: AnswerEvaluationRequest):
+def evaluate_interview_answer(
+    application_id: str,
+    request: AnswerEvaluationRequest,
+    current_candidate: dict = Depends(require_candidate_jwt),
+):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:
@@ -1808,7 +1849,8 @@ def evaluate_interview_answer(application_id: str, request: AnswerEvaluationRequ
 
 
 @router.post("/questions/{application_id}/complete")
-def complete_interview(application_id: str):
+def complete_interview(application_id: str, current_candidate: dict = Depends(require_candidate_jwt)):
+    application_id = assert_candidate_application(application_id, current_candidate)
     application = get_resume_application(application_id)
 
     if not application:

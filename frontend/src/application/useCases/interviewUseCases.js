@@ -74,6 +74,10 @@ export function validateInterviewToken(interviewRepository, token) {
   return interviewRepository.validateInterviewToken(token);
 }
 
+export function requestCandidateToken(interviewRepository, token) {
+  return interviewRepository.requestCandidateToken(token);
+}
+
 export function getQwenHealth(interviewRepository) {
   return interviewRepository.getQwenHealth();
 }

@@ -18,7 +18,9 @@ import {
   fetchCandidateVerificationData,
   fetchVerificationStatus,
 } from "@application/useCases/identityUseCases.js";
-import { checkInterviewAccess } from "@application/useCases/interviewUseCases.js";
+import { checkInterviewAccess, requestCandidateToken } from "@application/useCases/interviewUseCases.js";
+import { CANDIDATE_TOKEN_KEY } from "@infrastructure/api/apiClient.js";
+import { setLocalValue } from "@infrastructure/storage/localStorageClient.js";
 import {
   isFaceVerified,
   isGovernmentIdRequired,
@@ -75,9 +77,11 @@ function App() {
       return;
     }
 
-    const applicationId = decodeURIComponent((verifyMatch || faceMatch || interviewMatch)[1]);
+    const pathValue = decodeURIComponent((verifyMatch || faceMatch || interviewMatch)[1]);
+    let applicationId = pathValue;
     const attemptToken = new URLSearchParams(window.location.search).get("attempt") || "";
-    const candidatePath = (segment) => withAttemptQuery(`/${segment}/${encodeURIComponent(applicationId)}`, attemptToken);
+    const linkToken = attemptToken || (verifyMatch ? pathValue : "");
+    const candidatePath = (segment) => withAttemptQuery(`/${segment}/${encodeURIComponent(applicationId)}`, linkToken);
 
     setCandidateLoadingMessage(interviewMatch ? "Loading interview..." : "Loading candidate verification...");
     setCurrentPage("candidate-loading");
@@ -179,8 +183,28 @@ function App() {
       });
     };
 
-    checkInterviewAccess(interviewRepository, applicationId, attemptToken)
-      .then((access) => {
+    const initializeCandidateFlow = async () => {
+      try {
+        if (linkToken) {
+          const tokenResponse = await requestCandidateToken(interviewRepository, linkToken);
+
+          if (tokenResponse.access_token) {
+            setLocalValue(CANDIDATE_TOKEN_KEY, tokenResponse.access_token);
+          }
+
+          const candidateId = tokenResponse.candidate?.candidateId || tokenResponse.candidateId || "";
+
+          if (candidateId) {
+            applicationId = String(candidateId);
+          }
+
+          if (verifyMatch && pathValue !== applicationId) {
+            window.history.replaceState(null, "", candidatePath("verify"));
+          }
+        }
+
+        const access = await checkInterviewAccess(interviewRepository, applicationId, linkToken);
+
         if (access.status === "allowed" || access.status === "not_started" || access.status === "in_progress") {
           continueCandidateFlow();
           return;
@@ -200,11 +224,13 @@ function App() {
 
         setLinkValidationError(access.message || "Set a proper interview date and time.");
         setCurrentPage("candidate-link-error");
-      })
-      .catch((error) => {
+      } catch (error) {
         setLinkValidationError(error.message || "Interview schedule could not be verified.");
         setCurrentPage("candidate-link-error");
-      });
+      }
+    };
+
+    initializeCandidateFlow();
   }, [identityRepository, interviewRepository]);
 
   const handleUploadSuccess = (summary) => {

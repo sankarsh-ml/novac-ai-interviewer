@@ -242,14 +242,6 @@ def verify_indian_id_for_application(application_id: str, id_file_path: str) -> 
             "data": {},
         }
 
-    if application.get("ats_status") != "passed":
-        return {
-            "success": False,
-            "status_code": 403,
-            "message": "Indian Government ID verification is allowed only after ATS pass.",
-            "data": {},
-        }
-
     print("\n========== INDIAN GOVERNMENT ID KYC START ==========")
     print("APPLICATION ID:", application_id)
     print("ID FILE:", id_file_path)

@@ -8,6 +8,7 @@ function fillTemplate(template, params = {}) {
 
 export const endpoints = {
   adminLogin: endpointConfig.adminLogin,
+  candidateToken: endpointConfig.candidateToken,
   jobs: endpointConfig.jobs,
   job: (jobId) => fillTemplate(endpointConfig.job, { jobId }),
   jobApplications: (jobId) => fillTemplate(endpointConfig.jobApplications, { jobId }),

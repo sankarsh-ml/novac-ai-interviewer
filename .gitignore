@@ -122,3 +122,16 @@ trufor_outputs/
 
 # Git submodule/local broken folders if not intended to track
 indian-id-validator/.git/
+
+# Indian ID validator generated/cache files
+indian-id-validator/__pycache__/
+indian-id-validator/**/__pycache__/
+indian-id-validator/results/
+indian-id-validator/outputs/
+indian-id-validator/.pytest_cache/
+
+# Large/local model files if any
+indian-id-validator/models/*.pt
+indian-id-validator/models/*.pth
+indian-id-validator/models/*.onnx
+indian-id-validator/models/*.bin

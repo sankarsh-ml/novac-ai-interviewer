@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { loginAdmin } from "@application/useCases/adminUseCases.js";
 import { useDependencies } from "@presentation/hooks/useDependencies.js";
+import { ADMIN_TOKEN_KEY } from "@infrastructure/api/apiClient.js";
+import { removeLocalValue, setLocalValue } from "@infrastructure/storage/localStorageClient.js";
 import "@presentation/styles/AdminLoginPage.css";
 
 function AdminLoginPage({ onLoginSuccess, onBack }) {
@@ -20,6 +22,11 @@ function AdminLoginPage({ onLoginSuccess, onBack }) {
       const data = await loginAdmin(adminRepository, username, password);
 
       if (data.success) {
+        if (data.access_token) {
+          setLocalValue(ADMIN_TOKEN_KEY, data.access_token);
+          removeLocalValue("novac_admin_access_token");
+        }
+
         onLoginSuccess();
       } else {
         alert(data.message);

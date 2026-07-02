@@ -1,4 +1,4 @@
-import { buildApiUrl, apiRequest } from "../api/apiClient.js";
+import { apiRequest, buildAuthenticatedApiUrl } from "../api/apiClient.js";
 import { endpoints } from "../config/endpoints.js";
 
 export async function uploadResume(file, jobId = "") {
@@ -10,6 +10,7 @@ export async function uploadResume(file, jobId = "") {
   }
 
   return apiRequest(endpoints.resumeUpload, {
+    auth: "none",
     method: "POST",
     body: formData,
   });
@@ -21,6 +22,7 @@ export function uploadBulkResumes(jobId, files) {
   files.forEach((file) => formData.append("resumes", file));
 
   return apiRequest(endpoints.resumeBulkUpload, {
+    auth: "admin",
     method: "POST",
     body: formData,
   });
@@ -28,21 +30,22 @@ export function uploadBulkResumes(jobId, files) {
 
 export function submitAtsDecision(applicationId, decision) {
   return apiRequest(endpoints.atsDecision(applicationId), {
+    auth: "admin",
     method: "POST",
     body: { decision },
   });
 }
 
 export function scoreResume(applicationId) {
-  return apiRequest(endpoints.atsScore(applicationId), { method: "GET" });
+  return apiRequest(endpoints.atsScore(applicationId), { auth: "admin", method: "GET" });
 }
 
 export function getResumeDownloadUrl(applicationId) {
-  return buildApiUrl(endpoints.resumeDownload(applicationId));
+  return buildAuthenticatedApiUrl(endpoints.resumeDownload(applicationId), "admin");
 }
 
 export function getResumeViewUrl(applicationId) {
-  return buildApiUrl(endpoints.resumeView(applicationId));
+  return buildAuthenticatedApiUrl(endpoints.resumeView(applicationId), "admin");
 }
 
 export const getResume = getResumeDownloadUrl;

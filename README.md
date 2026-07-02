@@ -4,7 +4,10 @@
 
 ```bat
 cd D:\novac_3
+py -3.11 -m venv venv
 venv\Scripts\activate
+python -m pip install --upgrade pip setuptools wheel
+pip install -r requirements.txt
 cd backend
 uvicorn app.main:app --reload
 ```
@@ -28,6 +31,19 @@ cd D:\novac_3
 setup_id_venv.bat
 ```
 
+`setup_id_venv.bat` installs `indian-id-validator\requirements.txt`, verifies
+PaddleOCR/YOLO imports, checks the expected local model files, and verifies the
+`Id_Classifier` model can load.
+
+Expected local model files:
+
+- `indian-id-validator\models\Id_Classifier.pt`
+- `indian-id-validator\models\Aadhaar_Card.pt`
+- `indian-id-validator\models\Pan_Card.pt`
+- `indian-id-validator\models\Passport.pt`
+- `indian-id-validator\models\Voter_Id.pt`
+- `indian-id-validator\models\Driving_License.pt`
+
 ## Test Indian ID validator
 
 ```bat
@@ -44,12 +60,6 @@ INDIAN_ID_INFERENCE=D:\novac_3\indian-id-validator\inference.py
 These can be overridden in `.env`.
 
 ## Face verification
-
-Install the main backend face verification dependencies in `venv`:
-
-```bat
-pip install insightface onnxruntime opencv-python numpy
-```
 
 Face verification uses InsightFace `buffalo_l` ArcFace embeddings on CPU. The
 reference image priority is resume photo first, Aadhaar photo second. Live

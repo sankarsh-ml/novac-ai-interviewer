@@ -5,8 +5,9 @@ import re
 import shutil
 import uuid
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
+from app.application.services.admin_service import require_admin
 from app.routes.ats_routes import score_resume
 from app.application.services.application_store_service import get_application_by_id, list_applications, save_resume_application
 from app.application.services.resume_service import (
@@ -96,7 +97,7 @@ async def _process_resume_upload(file: UploadFile, application_id: str | None = 
     }
 
 
-@router.post("/bulk-upload")
+@router.post("/bulk-upload", dependencies=[Depends(require_admin)])
 async def bulk_upload_resumes(
     job_id: str = Form(...),
     resumes: list[UploadFile] = File(...),
@@ -187,7 +188,7 @@ async def upload_resume(
     }
 
 
-@router.post("/extract-text")
+@router.post("/extract-text", dependencies=[Depends(require_admin)])
 async def extract_resume_text(file: UploadFile = File(...)):
     resume_data = await _process_resume_upload(file)
     resume = resume_data["resume"]

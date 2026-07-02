@@ -18,6 +18,7 @@ export function uploadGovernmentId(applicationId, identityFile) {
   formData.append("aadhaar_file", identityFile);
 
   return apiRequest(endpoints.identityUpload(cleanApplicationId(applicationId)), {
+    auth: "candidate",
     method: "POST",
     body: formData,
   });
@@ -27,11 +28,11 @@ export const uploadIndianGovernmentId = uploadGovernmentId;
 export const uploadAadhaar = uploadGovernmentId;
 
 export function getCandidateVerificationData(applicationId) {
-  return apiRequest(endpoints.candidateVerification(cleanApplicationId(applicationId)), { method: "GET" });
+  return apiRequest(endpoints.candidateVerification(cleanApplicationId(applicationId)), { auth: "candidate", method: "GET" });
 }
 
 export function getVerificationStatus(applicationId) {
-  return apiRequest(endpoints.verificationStatus(cleanApplicationId(applicationId)), { method: "GET" });
+  return apiRequest(endpoints.verificationStatus(cleanApplicationId(applicationId)), { auth: "candidate", method: "GET" });
 }
 
 export function getIdentityConfig(applicationId) {
@@ -40,6 +41,7 @@ export function getIdentityConfig(applicationId) {
 
 export function markCandidateVerified(applicationId, referenceSource, faceScore, attempts = 1, matches = 1) {
   return apiRequest(endpoints.markVerified(cleanApplicationId(applicationId)), {
+    auth: "candidate",
     method: "POST",
     body: {
       reference_source: referenceSource || "",

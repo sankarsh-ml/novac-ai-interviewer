@@ -2,11 +2,12 @@ import { apiRequest } from "../api/apiClient.js";
 import { endpoints } from "../config/endpoints.js";
 
 export function getQuestionBank(jobId) {
-  return apiRequest(endpoints.questionBank(jobId), { method: "GET" });
+  return apiRequest(endpoints.questionBank(jobId), { auth: "admin", method: "GET" });
 }
 
 export function saveQuestionBank(jobId, questions) {
   return apiRequest(endpoints.questionBankSave, {
+    auth: "admin",
     method: "POST",
     body: { job_id: jobId, questions },
   });
@@ -18,6 +19,7 @@ export function uploadQuestionBank(jobId, file) {
   formData.append("file", file);
 
   return apiRequest(endpoints.questionBankParseUpload, {
+    auth: "admin",
     method: "POST",
     body: formData,
   });
@@ -25,6 +27,7 @@ export function uploadQuestionBank(jobId, file) {
 
 export function updateQuestion(questionId, payload) {
   return apiRequest(endpoints.questionBankQuestion(questionId), {
+    auth: "admin",
     method: "PUT",
     body: payload,
   });
@@ -32,12 +35,13 @@ export function updateQuestion(questionId, payload) {
 
 export function deleteQuestion(questionId, jobId) {
   return apiRequest(`${endpoints.questionBankQuestion(questionId)}?job_id=${encodeURIComponent(jobId)}`, {
+    auth: "admin",
     method: "DELETE",
   });
 }
 
 export function clearQuestionBank(jobId) {
-  return apiRequest(endpoints.questionBankClear(jobId), { method: "DELETE" });
+  return apiRequest(endpoints.questionBankClear(jobId), { auth: "admin", method: "DELETE" });
 }
 
 export function filterQuestionBank(questions, filters) {

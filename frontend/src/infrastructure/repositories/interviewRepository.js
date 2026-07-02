@@ -64,8 +64,9 @@ export function startInterview(applicationId) {
   return apiRequest(endpoints.interviewStart(cleanApplicationId(applicationId)), { method: "POST" });
 }
 
-export function checkInterviewAccess(applicationId) {
-  return apiRequest(endpoints.interviewAccess(cleanApplicationId(applicationId)), { method: "GET" });
+export function checkInterviewAccess(applicationId, attemptToken = "") {
+  const query = attemptToken ? `?attempt=${encodeURIComponent(attemptToken)}` : "";
+  return apiRequest(`${endpoints.interviewAccess(cleanApplicationId(applicationId))}${query}`, { method: "GET" });
 }
 
 export function sendInterviewHeartbeat(applicationId) {

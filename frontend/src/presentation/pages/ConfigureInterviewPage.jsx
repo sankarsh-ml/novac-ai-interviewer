@@ -8,6 +8,7 @@ import {
   configureQuestions,
   createInterviewLink,
   fetchConfigureData,
+  rescheduleInterviewLink,
 } from "@application/useCases/interviewUseCases.js";
 import {
   getDefaultDifficultySplit,
@@ -22,6 +23,10 @@ import "@presentation/styles/ConfigureInterviewPage.css";
 
 function ConfigureInterviewPage({ applicationId, onBack }) {
   const { interviewRepository } = useDependencies();
+  const queryParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const isRescheduleMode = queryParams.get("mode") === "reschedule";
+  const rescheduleInterviewId = queryParams.get("interviewId") || "";
+  const rescheduleJobId = queryParams.get("jobId") || "";
   const [application, setApplication] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [filters, setFilters] = useState({
@@ -89,7 +94,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
           ? "resume_photo"
           : "government_id"
       );
-      setGeneratedLink(data.application?.interview_link || "");
+      setGeneratedLink(isRescheduleMode ? "" : (data.application?.interview_link || ""));
       if (totalQuestionBankCount === 0) {
         setMessage("No questions are available in the question bank. Qwen generation has been selected automatically.");
       }
@@ -136,11 +141,14 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
   const qwenSplitTotal = qwenSplit.easy + qwenSplit.medium + qwenSplit.hard;
   const isQwenMode = questionSource === "qwen_generated";
   const isQuestionBankMode = questionSource === "question_bank";
-  const hasGeneratedLink = Boolean(
+  const existingLinkGenerated = Boolean(
     application?.interview_link_generated ||
     application?.interview_link ||
     generatedLink
   );
+  const hasGeneratedLink = Boolean(generatedLink) || (!isRescheduleMode && existingLinkGenerated);
+  const rescheduleBlocked = isRescheduleMode && getNormalizedInterviewStatus(application) === "complete";
+  const lockedForGeneration = rescheduleBlocked || (!isRescheduleMode && isInterviewLocked(application));
   const selectedExceedsLimit = requiredCount > 0 && selectedIds.length > requiredCount;
   const selectedAtLimit = requiredCount > 0 && selectedIds.length >= requiredCount;
   const qwenSplitMatchesCount = qwenSplitTotal === requiredCount;
@@ -149,7 +157,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
     Boolean(interviewTime) &&
     requiredCount > 0 &&
     (isQwenMode ? qwenSplitTotal > 0 && qwenSplitMatchesCount : selectedIds.length === requiredCount) &&
-    !isInterviewLocked(application) &&
+    !lockedForGeneration &&
     !hasGeneratedLink;
 
   const toggleQuestion = (question) => {
@@ -207,8 +215,13 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
       return;
     }
 
-    if (hasGeneratedLink) {
+    if (!isRescheduleMode && hasGeneratedLink) {
       setMessage("Interview link has already been generated. Use Copy Link from the shortlisted candidates page.");
+      return;
+    }
+
+    if (rescheduleBlocked) {
+      setMessage("Completed interviews cannot be rescheduled.");
       return;
     }
 
@@ -241,25 +254,44 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
     setGeneratedLink("");
 
     try {
-      await configureQuestions(interviewRepository, applicationId, {
+      let linkData;
+      const configurationPayload = {
+        application_id: applicationId,
+        candidateId: applicationId,
+        candidate_name: application?.candidate_name || "",
+        email: application?.email || "",
+        jobId: rescheduleJobId || application?.job_id || application?.jobId || "",
+        interviewId: rescheduleInterviewId || application?.active_attempt_id || application?.interview_token || "",
         questionSource,
         questionCount: requiredCount,
+        number_of_questions: requiredCount,
         selectedQuestionIds: isQuestionBankMode ? selectedIds : [],
+        selected_question_ids: isQuestionBankMode ? selectedIds : [],
         difficultySplit: isQwenMode ? qwenSplit : null,
+        difficulty_split: isQwenMode ? qwenSplit : null,
         identityConfig: {
           requireGovernmentId: identityMode !== "resume_photo",
           faceVerificationSource: identityMode === "resume_photo" ? "resume_photo" : "government_id",
         },
         filters_used: filters,
-      });
-      const linkData = await createInterviewLink(interviewRepository, {
-        application_id: applicationId,
-        candidate_name: application?.candidate_name || "",
-        email: application?.email || "",
         interview_date: interviewDate,
         interview_time: interviewTime,
         interview_scheduled_at: `${interviewDate}T${interviewTime}`,
-      });
+      };
+
+      if (isRescheduleMode) {
+        linkData = await rescheduleInterviewLink(interviewRepository, configurationPayload);
+      } else {
+        await configureQuestions(interviewRepository, applicationId, configurationPayload);
+        linkData = await createInterviewLink(interviewRepository, {
+          application_id: applicationId,
+          candidate_name: application?.candidate_name || "",
+          email: application?.email || "",
+          interview_date: interviewDate,
+          interview_time: interviewTime,
+          interview_scheduled_at: `${interviewDate}T${interviewTime}`,
+        });
+      }
 
       const link = linkData.verification_url || linkData.verificationUrl || linkData.link;
       setGeneratedLink(link);
@@ -267,9 +299,11 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
         ...(current || {}),
         interview_link: link,
         interview_link_generated: true,
+        interview_status: "not_started",
+        interviewStatus: "not_started",
       }));
       navigator.clipboard?.writeText(link);
-      setMessage(linkData.already_generated ? "Existing interview link copied." : "Interview link generated and copied.");
+      setMessage(isRescheduleMode ? "Fresh interview link generated and copied." : (linkData.already_generated ? "Existing interview link copied." : "Interview link generated and copied."));
     } catch (error) {
       if (error.status === 503) {
         const fallbackMessage = questionBankCount === 0
@@ -304,11 +338,17 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
 
         <header className="configure-header">
           <div>
-            <h1>Configure Interview</h1>
+            <h1>{isRescheduleMode ? "Reschedule Interview" : "Configure Interview"}</h1>
             <p>{application?.candidate_name || "Candidate"} | {application?.email || "No email"} | {application?.job_title || "Job"}</p>
           </div>
           <strong>{isQwenMode ? `Qwen ${qwenSplitTotal} / ${requiredCount || 0}` : `Selected ${selectedIds.length} / ${requiredCount || 0}`}</strong>
         </header>
+
+        {isRescheduleMode && (
+          <p className="configure-message">
+            This will create a fresh interview link for the candidate. Previous partial answers will be preserved for history but will not be used for the new attempt.
+          </p>
+        )}
 
         <InterviewTimerConfig
           interviewDate={interviewDate}
@@ -366,6 +406,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
           <p className="configure-message">You have already selected the required number of questions. Remove one to add another.</p>
         )}
         {hasGeneratedLink && <p className="configure-message">Interview link has already been generated. Selected questions and schedule are locked.</p>}
+        {rescheduleBlocked && <p className="configure-message">Completed interviews cannot be rescheduled.</p>}
         {message && <p className="configure-message">{message}</p>}
         {generatedLink && <p className="generated-link">{generatedLink}</p>}
 
@@ -454,7 +495,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
             {!selectedQuestions.length && <p>No questions selected.</p>}
             </>
             )}
-            {isInterviewLocked(application) && <p className="configure-message">This interview is already closed for link generation.</p>}
+            {lockedForGeneration && <p className="configure-message">This interview is already closed for link generation.</p>}
             <button className="generate-link-button" type="button" disabled={!canGenerate || submitting} onClick={generateLink}>
               {submitting ? "Generating..." : "Generate Interview Link"}
             </button>
@@ -498,6 +539,47 @@ function normalizeDifficulty(value) {
 function formatDifficulty(value) {
   const difficulty = normalizeDifficulty(value);
   return difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+}
+
+
+function getNormalizedInterviewStatus(application) {
+  const status = String(application?.interview_status || application?.interviewStatus || "").toLowerCase();
+  const totalQuestions = getTotalQuestionCount(application);
+  const answeredCount = Number(application?.answered_count || application?.answeredCount || 0);
+
+  if (
+    application?.interview_completed === true ||
+    application?.interviewCompleted === true ||
+    application?.completedAt ||
+    application?.interview_completed_at ||
+    ["complete", "completed"].includes(status) ||
+    (totalQuestions > 0 && answeredCount >= totalQuestions)
+  ) {
+    return "complete";
+  }
+
+  if (["partial", "abandoned", "quit", "quit_midway", "interrupted", "in_progress"].includes(status)) {
+    return "partial";
+  }
+
+  return "not_started";
+}
+
+
+function getTotalQuestionCount(application) {
+  const finalQuestions = application?.finalQuestions || application?.final_questions;
+
+  if (Array.isArray(finalQuestions)) {
+    return finalQuestions.length;
+  }
+
+  const configuredQuestions = application?.interview_questions?.questions;
+
+  if (Array.isArray(configuredQuestions)) {
+    return configuredQuestions.length;
+  }
+
+  return Number(application?.total_questions || application?.questionCount || application?.question_count || 0);
 }
 
 

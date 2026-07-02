@@ -30,8 +30,8 @@ export function startInterview(interviewRepository, applicationId) {
   return interviewRepository.startInterview(applicationId);
 }
 
-export function checkInterviewAccess(interviewRepository, applicationId) {
-  return interviewRepository.checkInterviewAccess(applicationId);
+export function checkInterviewAccess(interviewRepository, applicationId, attemptToken = "") {
+  return interviewRepository.checkInterviewAccess(applicationId, attemptToken);
 }
 
 export function sendInterviewHeartbeat(interviewRepository, applicationId) {

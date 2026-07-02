@@ -76,6 +76,8 @@ function App() {
     }
 
     const applicationId = decodeURIComponent((verifyMatch || faceMatch || interviewMatch)[1]);
+    const attemptToken = new URLSearchParams(window.location.search).get("attempt") || "";
+    const candidatePath = (segment) => withAttemptQuery(`/${segment}/${encodeURIComponent(applicationId)}`, attemptToken);
 
     setCandidateLoadingMessage(interviewMatch ? "Loading interview..." : "Loading candidate verification...");
     setCurrentPage("candidate-loading");
@@ -85,7 +87,7 @@ function App() {
       fetchCandidateVerificationData(identityRepository, applicationId)
         .then((data) => {
           if (shouldUseResumePhotoVerification(data.data)) {
-            window.history.replaceState(null, "", `/face-verification/${encodeURIComponent(applicationId)}`);
+            window.history.replaceState(null, "", candidatePath("face-verification"));
             setApplicationSummary(data.data);
             setCurrentPage("face-verification");
             return;
@@ -105,7 +107,7 @@ function App() {
       fetchVerificationStatus(identityRepository, applicationId)
         .then((data) => {
           if (isResumePhotoMissingFallback(data.data)) {
-            window.history.replaceState(null, "", `/verify/${encodeURIComponent(applicationId)}`);
+            window.history.replaceState(null, "", candidatePath("verify"));
             return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
               setApplicationSummary(candidateData.data);
               setCurrentPage("aadhaar");
@@ -113,7 +115,7 @@ function App() {
           }
 
           if (isGovernmentIdRequired(data.data) && !isGovernmentIdVerified(data.data)) {
-            window.history.replaceState(null, "", `/verify/${encodeURIComponent(applicationId)}`);
+            window.history.replaceState(null, "", candidatePath("verify"));
             return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
               setApplicationSummary(candidateData.data);
               setCurrentPage("aadhaar");
@@ -121,7 +123,7 @@ function App() {
           }
 
           if (isFaceVerified(data.data)) {
-            window.history.replaceState(null, "", `/interview/${encodeURIComponent(applicationId)}`);
+            window.history.replaceState(null, "", candidatePath("interview"));
             return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
               setApplicationSummary(candidateData.data);
               setCurrentPage("interview");
@@ -143,7 +145,7 @@ function App() {
     fetchVerificationStatus(identityRepository, applicationId)
       .then((data) => {
         if (isResumePhotoMissingFallback(data.data)) {
-          window.history.replaceState(null, "", `/verify/${encodeURIComponent(applicationId)}`);
+          window.history.replaceState(null, "", candidatePath("verify"));
           return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
             setApplicationSummary(candidateData.data);
             setCurrentPage("aadhaar");
@@ -151,7 +153,7 @@ function App() {
         }
 
         if (isGovernmentIdRequired(data.data) && !isGovernmentIdVerified(data.data)) {
-          window.history.replaceState(null, "", `/verify/${encodeURIComponent(applicationId)}`);
+          window.history.replaceState(null, "", candidatePath("verify"));
           return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
             setApplicationSummary(candidateData.data);
             setCurrentPage("aadhaar");
@@ -159,7 +161,7 @@ function App() {
         }
 
         if (!isFaceVerified(data.data)) {
-          window.history.replaceState(null, "", `/face-verification/${encodeURIComponent(applicationId)}`);
+          window.history.replaceState(null, "", candidatePath("face-verification"));
           return fetchCandidateVerificationData(identityRepository, applicationId).then((candidateData) => {
             setApplicationSummary(candidateData.data);
             setCurrentPage("face-verification");
@@ -177,7 +179,7 @@ function App() {
       });
     };
 
-    checkInterviewAccess(interviewRepository, applicationId)
+    checkInterviewAccess(interviewRepository, applicationId, attemptToken)
       .then((access) => {
         if (access.status === "allowed" || access.status === "not_started" || access.status === "in_progress") {
           continueCandidateFlow();
@@ -281,7 +283,7 @@ function App() {
             window.history.replaceState(
               null,
               "",
-              `/face-verification/${encodeURIComponent(applicationSummary.application_id)}`
+              withAttemptQuery(`/face-verification/${encodeURIComponent(applicationSummary.application_id)}`)
             );
           }
           setCurrentPage("face-verification");
@@ -314,7 +316,7 @@ function App() {
             window.history.replaceState(
               null,
               "",
-              `/interview/${encodeURIComponent(applicationSummary.application_id)}`
+              withAttemptQuery(`/interview/${encodeURIComponent(applicationSummary.application_id)}`)
             );
           }
           setCurrentPage("interview");
@@ -419,12 +421,30 @@ function App() {
       <ShortlistedCandidatesPage
           job={selectedJob}
           onBack={() => setCurrentPage("job-applications")}
-          onConfigureInterview={(application) => {
+          onConfigureInterview={(application, options = {}) => {
             setSelectedInterviewApplication(application);
+            const queryParams = new URLSearchParams();
+
+            if (options.mode) {
+              queryParams.set("mode", options.mode);
+            }
+
+            const jobId = application.job_id || application.jobId || selectedJob?.id || selectedJob?.jobId || "";
+            const interviewId = application.active_attempt_id || application.interview_token || application.currentInterviewId || application.interviewId || "";
+
+            if (jobId) {
+              queryParams.set("jobId", jobId);
+            }
+
+            if (interviewId) {
+              queryParams.set("interviewId", interviewId);
+            }
+
+            const queryString = queryParams.toString();
             window.history.replaceState(
               null,
               "",
-              `/configure-interview/${encodeURIComponent(application.application_id)}`
+              `/configure-interview/${encodeURIComponent(application.application_id)}${queryString ? `?${queryString}` : ""}`
             );
             setCurrentPage("configure-interview");
           }}
@@ -490,6 +510,12 @@ function App() {
     onOpenAdmin={() => setCurrentPage("login")}
     />
   );
+}
+
+
+function withAttemptQuery(path, attemptToken = "") {
+  const token = attemptToken || new URLSearchParams(window.location.search).get("attempt") || "";
+  return token ? `${path}?attempt=${encodeURIComponent(token)}` : path;
 }
 
 

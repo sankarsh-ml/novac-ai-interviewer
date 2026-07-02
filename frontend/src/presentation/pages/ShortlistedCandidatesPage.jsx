@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { fetchCandidates } from "@application/useCases/candidateUseCases.js";
-import { rescheduleInterviewLink } from "@application/useCases/interviewUseCases.js";
 import { fetchBulkReports, fetchReport } from "@application/useCases/reportUseCases.js";
 import { useDependencies } from "@presentation/hooks/useDependencies.js";
 import { downloadBlob, openBlob } from "@shared/utils/fileUtils.js";
@@ -8,7 +7,7 @@ import { safeFilename } from "@shared/utils/formatters.js";
 import "@presentation/styles/ShortlistedCandidatesPage.css";
 
 function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
-  const { candidateRepository, interviewRepository, reportRepository } = useDependencies();
+  const { candidateRepository, reportRepository } = useDependencies();
 
   const [applications, setApplications] =
     useState([]);
@@ -18,7 +17,6 @@ function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
   const [reportError, setReportError] = useState("");
   const [viewReportLoadingId, setViewReportLoadingId] = useState("");
   const [reportLoadingId, setReportLoadingId] = useState("");
-  const [rescheduleLoadingId, setRescheduleLoadingId] = useState("");
   const [bulkReportLoading, setBulkReportLoading] = useState(false);
   const [copiedLinkId, setCopiedLinkId] = useState("");
 
@@ -49,7 +47,7 @@ function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
 
   const completedApplications = applications.filter(isReportReady);
 
-  const rescheduleInterview = async (application) => {
+  const rescheduleInterview = (application) => {
     const applicationId = application?.application_id;
 
     if (!applicationId) {
@@ -57,56 +55,13 @@ function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
       return;
     }
 
-    if (getNormalizedInterviewStatus(application) === "complete") {
-      const confirmed = window.confirm("This candidate already has a completed report. Reschedule without removing the existing report?");
-
-      if (!confirmed) {
-        return;
-      }
-    }
-
-    const currentDate = application.interview_date || new Date().toISOString().slice(0, 10);
-    const interviewDate = window.prompt("Enter new interview date (YYYY-MM-DD)", currentDate);
-
-    if (!interviewDate) {
-      return;
-    }
-
-    const currentTime = application.interview_time || "10:00";
-    const interviewTime = window.prompt("Enter new interview time (HH:MM, 24-hour)", currentTime);
-
-    if (!interviewTime) {
+    if (!canRescheduleInterview(application)) {
+      setReportError("Completed interviews cannot be rescheduled.");
       return;
     }
 
     setReportError("");
-    setRescheduleLoadingId(applicationId);
-
-    try {
-      const data = await rescheduleInterviewLink(interviewRepository, {
-        application_id: applicationId,
-        candidate_name: application.candidate_name || "",
-        email: application.email || "",
-        interview_date: interviewDate,
-        interview_time: interviewTime,
-        interview_scheduled_at: `${interviewDate}T${interviewTime}`,
-      });
-      const link = data.verification_url || data.verificationUrl || data.link || "";
-
-      if (link) {
-        await navigator.clipboard?.writeText(link);
-        setCopiedLinkId(applicationId);
-        window.setTimeout(() => setCopiedLinkId(""), 1800);
-      }
-
-      await fetchApplications();
-      setReportError(link ? "Interview rescheduled and new link copied." : "Interview rescheduled.");
-    } catch (error) {
-      console.error(error);
-      setReportError(error.message || "Could not reschedule interview.");
-    } finally {
-      setRescheduleLoadingId("");
-    }
+    onConfigureInterview?.(application, { mode: "reschedule" });
   };
 
   const copyInterviewLink = async (application) => {
@@ -362,15 +317,17 @@ function ShortlistedCandidatesPage({job,onBack,onConfigureInterview}) {
                           Generate Link
                         </button>
                       )}
-                        {isLinkGenerated(app) && (
+                        {canRescheduleInterview(app) && (
                           <button
                             className="secondary-button"
                             type="button"
                             onClick={() => rescheduleInterview(app)}
-                            disabled={rescheduleLoadingId === app.application_id}
                           >
-                            {rescheduleLoadingId === app.application_id ? "Rescheduling..." : "Reschedule"}
+                            Reschedule
                           </button>
+                        )}
+                        {isLinkGenerated(app) && getNormalizedInterviewStatus(app) === "complete" && (
+                          <span className="completed-note">Interview completed - rescheduling unavailable</span>
                         )}
                       </div>
 
@@ -649,17 +606,75 @@ function getInterviewLabel(application) {
 
 
 function getNormalizedInterviewStatus(application) {
-  const status = String(application?.interview_status || application?.interviewStatus || "").toLowerCase();
+  const status = String(
+    application?.interview_status ||
+    application?.interviewStatus ||
+    application?.status ||
+    application?.latestInterviewStatus ||
+    ""
+  ).toLowerCase();
+  const answeredCount = Number(
+    application?.answered_count ??
+    application?.answeredCount ??
+    application?.answersCount ??
+    application?.completedQuestions ??
+    0
+  ) || 0;
+  const totalQuestions = getTotalQuestionCount(application);
 
-  if (application?.interview_completed === true || application?.interviewCompleted === true || ["complete", "completed"].includes(status)) {
+  if (
+    application?.interview_completed === true ||
+    application?.interviewCompleted === true ||
+    application?.completedAt ||
+    application?.completed_at ||
+    application?.interview_completed_at ||
+    ["complete", "completed"].includes(status) ||
+    (totalQuestions > 0 && answeredCount >= totalQuestions)
+  ) {
     return "complete";
   }
 
-  if (["partial", "quit", "interrupted"].includes(status)) {
+  if (
+    ["partial", "abandoned", "quit", "quit_midway", "interrupted", "in_progress"].includes(status) ||
+    application?.interview_quit_at ||
+    (answeredCount > 0 && (!totalQuestions || answeredCount < totalQuestions))
+  ) {
     return "partial";
   }
 
   return "not_started";
+}
+
+
+function canRescheduleInterview(application) {
+  if (typeof application?.canReschedule === "boolean") {
+    return application.canReschedule;
+  }
+
+  return getNormalizedInterviewStatus(application) !== "complete";
+}
+
+
+function getTotalQuestionCount(application) {
+  const finalQuestions = application?.finalQuestions || application?.final_questions;
+
+  if (Array.isArray(finalQuestions)) {
+    return finalQuestions.length;
+  }
+
+  const configuredQuestions = application?.interview_questions?.questions;
+
+  if (Array.isArray(configuredQuestions)) {
+    return configuredQuestions.length;
+  }
+
+  return Number(
+    application?.total_questions ??
+    application?.totalQuestions ??
+    application?.questionCount ??
+    application?.question_count ??
+    0
+  ) || 0;
 }
 
 

@@ -227,6 +227,13 @@
   color: #b91c1c;
 }
 
+.completed-note {
+  color: #64748b;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
 .link-button,
 .report-button {
   border: none;

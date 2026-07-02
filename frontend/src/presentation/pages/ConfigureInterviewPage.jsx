@@ -94,7 +94,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
           ? "resume_photo"
           : "government_id"
       );
-      setGeneratedLink(isRescheduleMode ? "" : (data.application?.interview_link || ""));
+      setGeneratedLink(isRescheduleMode ? "" : getInterviewLink(data.application));
       if (totalQuestionBankCount === 0) {
         setMessage("No questions are available in the question bank. Qwen generation has been selected automatically.");
       }
@@ -261,7 +261,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
         candidate_name: application?.candidate_name || "",
         email: application?.email || "",
         jobId: rescheduleJobId || application?.job_id || application?.jobId || "",
-        interviewId: rescheduleInterviewId || application?.active_attempt_id || application?.interview_token || "",
+        interviewId: rescheduleInterviewId || application?.active_attempt_id || application?.interviewLinkToken || application?.interview_token || "",
         questionSource,
         questionCount: requiredCount,
         number_of_questions: requiredCount,
@@ -293,17 +293,19 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
         });
       }
 
-      const link = linkData.verification_url || linkData.verificationUrl || linkData.link;
+      const link = getInterviewLink(linkData);
       setGeneratedLink(link);
       setApplication((current) => ({
         ...(current || {}),
         interview_link: link,
+        interviewLink: link,
+        interviewLinkToken: linkData.interviewLinkToken || current?.interviewLinkToken || "",
         interview_link_generated: true,
         interview_status: "not_started",
         interviewStatus: "not_started",
       }));
       navigator.clipboard?.writeText(link);
-      setMessage(isRescheduleMode ? "Fresh interview link generated and copied." : (linkData.already_generated ? "Existing interview link copied." : "Interview link generated and copied."));
+      setMessage(isRescheduleMode ? "Interview rescheduled successfully. Existing candidate link has been updated." : (linkData.already_generated ? "Existing interview link copied." : "Interview link generated and copied."));
     } catch (error) {
       if (error.status === 503) {
         const fallbackMessage = questionBankCount === 0
@@ -346,7 +348,7 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
 
         {isRescheduleMode && (
           <p className="configure-message">
-            This will create a fresh interview link for the candidate. Previous partial answers will be preserved for history but will not be used for the new attempt.
+            The existing candidate link will stay the same. Previous partial answers will be preserved for history but will not be used for the updated interview.
           </p>
         )}
 
@@ -503,6 +505,18 @@ function ConfigureInterviewPage({ applicationId, onBack }) {
         </section>
       </section>
     </main>
+  );
+}
+
+
+function getInterviewLink(source) {
+  return (
+    source?.interviewLink ||
+    source?.interview_link ||
+    source?.verification_url ||
+    source?.verificationUrl ||
+    source?.link ||
+    ""
   );
 }
 

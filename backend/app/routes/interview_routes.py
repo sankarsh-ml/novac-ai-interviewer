@@ -39,10 +39,12 @@ from app.application.services.interview_service import (
     get_interview_by_id,
     get_link_by_token,
     mark_link_used,
-    update_interview_attempt,
     upsert_interview_for_candidate,
 )
 from app.core.config import get_path
+from app.infrastructure.database.mongo_service import get_database
+from app.repositories.job_repository import get_by_id as get_job_by_id
+from app.utils.interview_tokens import generate_interview_token, get_interview_link_token
 
 
 router = APIRouter()
@@ -224,14 +226,13 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
             detail="Selected question count must exactly match number_of_questions before generating the link.",
         )
 
-    token = uuid.uuid4().hex
+    token = generate_interview_token()
     attempt_number = _next_attempt_number(application)
     expiry_date = _normalize_expiry_date(payload.expiry_date)
     frontend_base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
-    verification_url = f"{frontend_base_url}/verify/{payload.application_id}"
-    interview_url = f"{frontend_base_url}/interview/{payload.application_id}"
+    verification_url = f"{frontend_base_url}/verify/{payload.application_id}?attempt={token}"
+    interview_url = f"{frontend_base_url}/interview/{payload.application_id}?attempt={token}"
     data = {
-        "token": token,
         "application_id": payload.application_id,
         "candidate_name": payload.candidate_name or _get_candidate_name(application),
         "email": payload.email or application.get("email", ""),
@@ -268,7 +269,11 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
         },
         {"createdAt": datetime.now().isoformat()},
     )
-    print(f"[Storage] Saved interview to MongoDB interviewId={token}")
+    print(
+        "[InterviewCreate] "
+        f"candidateId={payload.application_id} jobId={application.get('jobId') or application.get('job_id')} "
+        f"interviewId={token} interviewLinkToken={token} status=configured"
+    )
     update_application(
         payload.application_id,
         {
@@ -299,11 +304,12 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
     return {
         "success": True,
         "link": verification_url,
+        "interviewLink": verification_url,
+        "interviewLinkToken": token,
         "verificationUrl": verification_url,
         "verification_url": verification_url,
         "interviewUrl": interview_url,
         "interview_url": interview_url,
-        "token": token,
         "expiry_date": expiry_date,
         "interview_date": schedule["date"],
         "interview_time": schedule["time"],
@@ -348,7 +354,7 @@ def _reschedule_interview_attempt(payload: RescheduleInterviewRequest, interview
         or payload.interviewId
         or payload.interview_id
         or application.get("active_attempt_id")
-        or application.get("interview_token")
+        or get_interview_link_token(application)
         or application.get("interviewId")
         or ""
     ).strip()
@@ -397,13 +403,28 @@ def _reschedule_interview_attempt(payload: RescheduleInterviewRequest, interview
     requested_count = configuration["requested_count"]
     split = configuration["difficulty_split"]
     duration_minutes = _parse_positive_question_count(payload.durationMinutes or payload.duration_minutes)
-    previous_interview_id = old_interview_id or str(old_interview.get("interviewId") or old_interview.get("token") or "")
-    new_token = uuid.uuid4().hex
-    attempt_number = _next_attempt_number(application)
+    existing_interview_id = str(old_interview.get("interviewId") or old_interview.get("interview_id") or old_interview_id or "").strip()
+    existing_token = get_interview_link_token(old_interview) or get_interview_link_token(application)
+
+    if not existing_interview_id or not existing_token:
+        raise HTTPException(status_code=400, detail="Existing interview link is missing. Generate the interview link before rescheduling.")
+
+    current_attempt_number = _current_attempt_number({**application, **old_interview})
+    next_attempt_number = current_attempt_number + 1
     expiry_date = _normalize_expiry_date(payload.expiry_date)
     frontend_base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
-    verification_url = f"{frontend_base_url}/verify/{application_id}?attempt={new_token}"
-    interview_url = f"{frontend_base_url}/interview/{application_id}?attempt={new_token}"
+    verification_url = (
+        application.get("interview_link")
+        or application.get("verification_link")
+        or old_interview.get("link")
+        or old_interview.get("verification_url")
+        or f"{frontend_base_url}/verify/{application_id}?attempt={existing_token}"
+    )
+    interview_url = (
+        application.get("interview_url")
+        or old_interview.get("interview_url")
+        or f"{frontend_base_url}/interview/{application_id}?attempt={existing_token}"
+    )
     now = datetime.now().isoformat()
     current_status = _normalize_interview_status(application)
     snapshot = _current_attempt_snapshot(application, current_status, now)
@@ -413,90 +434,29 @@ def _reschedule_interview_attempt(payload: RescheduleInterviewRequest, interview
             **snapshot,
             "reschedule_status": "rescheduled",
             "rescheduled_at": now,
-            "rescheduled_to_interview_id": new_token,
-            "rescheduledToInterviewId": new_token,
+            "attempt_number": current_attempt_number,
+            "attemptNumber": current_attempt_number,
         }
         archived_attempts = _upsert_attempt_snapshot(application.get("interview_attempts"), snapshot)
     else:
         archived_attempts = _archive_current_attempt(application, current_status)
 
-    update_interview_attempt(
-        previous_interview_id,
-        {
-            "status": "rescheduled",
-            "interview_status": "rescheduled",
-            "rescheduledAt": now,
-            "rescheduled_at": now,
-            "rescheduledToInterviewId": new_token,
-            "rescheduled_to_interview_id": new_token,
-        },
+    _archive_interview_answers(existing_interview_id, current_attempt_number, now)
+    _archive_interview_answers(existing_token, current_attempt_number, now)
+
+    print(
+        "[Reschedule] "
+        f"interviewId={existing_interview_id} token={existing_token} attemptNumber={next_attempt_number}"
     )
-
-    previous_ids = [
-        str(value)
-        for value in (application.get("previousInterviewIds") or application.get("previous_interview_ids") or [])
-        if str(value or "").strip()
-    ]
-
-    if previous_interview_id and previous_interview_id not in previous_ids:
-        previous_ids.append(previous_interview_id)
-
-    new_interview_data = {
-        "token": new_token,
-        "interviewId": new_token,
-        "interview_id": new_token,
-        "candidateId": application_id,
-        "application_id": application_id,
-        "candidate_name": payload.candidate_name or _get_candidate_name(application),
-        "email": payload.email or application.get("email", ""),
-        "jobId": application.get("jobId") or application.get("job_id") or payload.jobId or payload.job_id,
-        "job_id": application.get("job_id") or application.get("jobId") or payload.job_id or payload.jobId,
-        "previousInterviewId": previous_interview_id,
-        "previous_interview_id": previous_interview_id,
-        "rescheduledFrom": previous_interview_id,
-        "rescheduled_from": previous_interview_id,
-        "attemptNumber": attempt_number,
-        "attempt_number": attempt_number,
-        "expiry_date": expiry_date,
-        "interview_date": schedule["date"],
-        "interview_time": schedule["time"],
-        "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
-        "scheduledAt": schedule["scheduled_at"].isoformat(),
-        "durationMinutes": duration_minutes,
-        "duration_minutes": duration_minutes,
-        "used": False,
-        "link": verification_url,
-        "verification_url": verification_url,
-        "interview_url": interview_url,
-        "interviewLinkToken": new_token,
-        "status": "configured",
-        "questionSource": question_source,
-        "question_source": question_source,
-        "difficultySplit": split,
-        "difficulty_split": split,
-        "selectedQuestionIds": selected_ids,
-        "selected_question_ids": selected_ids,
-        "questionCount": requested_count,
-        "question_count": requested_count,
-        "finalQuestions": final_questions,
-        "final_questions": final_questions,
-        "identityConfig": identity_config,
-        "identity_config": identity_config,
-    }
-    upsert_interview_for_candidate(application_id, new_interview_data, {"createdAt": now})
 
     update_application(
         application_id,
         {
             "interview_attempts": archived_attempts,
-            "previousInterviewIds": previous_ids,
-            "previous_interview_ids": previous_ids,
-            "currentInterviewId": new_token,
-            "current_interview_id": new_token,
-            "previousInterviewId": previous_interview_id,
-            "previous_interview_id": previous_interview_id,
-            "interviewId": new_token,
-            "interview_id": new_token,
+            "currentInterviewId": existing_interview_id,
+            "current_interview_id": existing_interview_id,
+            "interviewId": existing_interview_id,
+            "interview_id": existing_interview_id,
             "interview_config": interview_config,
             "interview_questions": interview_payload,
             "interviewQuestions": final_questions,
@@ -516,7 +476,7 @@ def _reschedule_interview_attempt(payload: RescheduleInterviewRequest, interview
             "interview_link": verification_url,
             "verification_link": verification_url,
             "interview_url": interview_url,
-            "interview_token": new_token,
+            "interview_token": existing_token,
             "expiry_date": expiry_date,
             "interview_date": schedule["date"],
             "interview_time": schedule["time"],
@@ -538,10 +498,61 @@ def _reschedule_interview_attempt(payload: RescheduleInterviewRequest, interview
             "interview_quit_at": None,
             "interview_last_seen_at": None,
             "interview_session_id": "",
-            "active_attempt_id": new_token,
-            "attempt_number": attempt_number,
+            "active_attempt_id": existing_token,
+            "attempt_number": next_attempt_number,
+            "attemptNumber": next_attempt_number,
             "rescheduled_at": now,
-            "rescheduled_from": previous_interview_id,
+            "rescheduledAt": now,
+        },
+    )
+    _reset_rescheduled_candidate_fields(application_id)
+    _update_rescheduled_interview_record(
+        existing_interview_id,
+        existing_token,
+        {
+            "interviewId": existing_interview_id,
+            "interview_id": existing_interview_id,
+            "candidateId": application_id,
+            "application_id": application_id,
+            "candidate_name": payload.candidate_name or _get_candidate_name(application),
+            "email": payload.email or application.get("email", ""),
+            "jobId": application.get("jobId") or application.get("job_id") or payload.jobId or payload.job_id,
+            "job_id": application.get("job_id") or application.get("jobId") or payload.job_id or payload.jobId,
+            "attemptNumber": next_attempt_number,
+            "attempt_number": next_attempt_number,
+            "expiry_date": expiry_date,
+            "interview_date": schedule["date"],
+            "interview_time": schedule["time"],
+            "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
+            "scheduledAt": schedule["scheduled_at"].isoformat(),
+            "scheduled_at": schedule["scheduled_at"].isoformat(),
+            "durationMinutes": duration_minutes,
+            "duration_minutes": duration_minutes,
+            "used": False,
+            "link": verification_url,
+            "verification_url": verification_url,
+            "interview_url": interview_url,
+            "interviewLinkToken": existing_token,
+            "status": "configured",
+            "interviewStatus": "Not Started",
+            "interview_status": "not_started",
+            "questionSource": question_source,
+            "question_source": question_source,
+            "difficultySplit": split,
+            "difficulty_split": split,
+            "selectedQuestionIds": selected_ids,
+            "selected_question_ids": selected_ids,
+            "generatedQuestions": interview_payload.get("generatedQuestions") or [],
+            "generated_questions": interview_payload.get("generated_questions") or [],
+            "questionCount": requested_count,
+            "question_count": requested_count,
+            "finalQuestions": final_questions,
+            "final_questions": final_questions,
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
+            "rescheduledAt": now,
+            "rescheduled_at": now,
+            "updatedAt": now,
         },
     )
 
@@ -549,26 +560,117 @@ def _reschedule_interview_attempt(payload: RescheduleInterviewRequest, interview
         "success": True,
         "rescheduled": True,
         "link": verification_url,
+        "interviewLink": verification_url,
+        "interviewLinkToken": existing_token,
         "verificationUrl": verification_url,
         "verification_url": verification_url,
         "interviewUrl": interview_url,
         "interview_url": interview_url,
-        "token": new_token,
-        "interviewId": new_token,
-        "previousInterviewId": previous_interview_id,
+        "interviewId": existing_interview_id,
         "expiry_date": expiry_date,
         "interview_date": schedule["date"],
         "interview_time": schedule["time"],
         "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
         "interview_link_generated": True,
-        "already_generated": False,
+        "already_generated": True,
         "interview_status": "not_started",
-        "attempt_number": attempt_number,
-        "active_attempt_id": new_token,
+        "attempt_number": next_attempt_number,
+        "active_attempt_id": existing_token,
         "identityConfig": identity_config,
         "identity_config": identity_config,
-        "message": "Interview rescheduled. A fresh interview link has been generated.",
+        "message": "Interview rescheduled successfully.",
     }
+
+
+def _archive_interview_answers(interview_id: str, attempt_number: int, timestamp: str) -> None:
+    if not interview_id:
+        return
+
+    get_database().interview_answers.update_many(
+        {"interviewId": str(interview_id), "archived": {"$ne": True}},
+        {
+            "$set": {
+                "archived": True,
+                "archivedReason": "rescheduled",
+                "archived_reason": "rescheduled",
+                "archivedAt": timestamp,
+                "archived_at": timestamp,
+                "attemptNumber": attempt_number,
+                "attempt_number": attempt_number,
+                "updatedAt": timestamp,
+            }
+        },
+    )
+
+
+def _reset_rescheduled_candidate_fields(application_id: str) -> None:
+    if not application_id:
+        return
+
+    get_database().candidates.update_one(
+        {
+            "$or": [
+                {"application_id": str(application_id)},
+                {"candidateId": str(application_id)},
+                {"candidate_id": str(application_id)},
+            ]
+        },
+        {
+            "$unset": {
+                "completedAt": "",
+                "completed_at": "",
+                "interview_completed_at": "",
+                "startedAt": "",
+                "started_at": "",
+                "interview_started_at": "",
+                "expiredAt": "",
+                "expired_at": "",
+                "expiresAt": "",
+                "expires_at": "",
+                "interview_quit_at": "",
+                "interview_session_id": "",
+            }
+        },
+    )
+
+
+def _update_rescheduled_interview_record(interview_id: str, token: str, set_values: dict) -> None:
+    unset_values = {
+        "completedAt": "",
+        "completed_at": "",
+        "interview_completed_at": "",
+        "startedAt": "",
+        "started_at": "",
+        "interview_started_at": "",
+        "expiredAt": "",
+        "expired_at": "",
+        "expiresAt": "",
+        "expires_at": "",
+        "error": "",
+        "expired": "",
+        "expiredReason": "",
+        "expired_reason": "",
+    }
+
+    for field in set_values:
+        unset_values.pop(field, None)
+
+    get_database().interviews.update_one(
+        {
+            "$or": [
+                {"interviewId": str(interview_id)},
+                {"interview_id": str(interview_id)},
+                {"interviewLinkToken": str(token)},
+                {"token": str(token)},
+                {"linkToken": str(token)},
+                {"interview_token": str(token)},
+            ]
+        },
+        {
+            "$set": set_values,
+            "$unset": unset_values,
+        },
+    )
 
 
 def _existing_interview_link_response(application: dict, existing_link: str) -> dict:
@@ -576,11 +678,12 @@ def _existing_interview_link_response(application: dict, existing_link: str) -> 
     return {
         "success": True,
         "link": existing_link,
+        "interviewLink": existing_link,
+        "interviewLinkToken": get_interview_link_token(application),
         "verificationUrl": existing_link,
         "verification_url": existing_link,
         "interviewUrl": application.get("interview_url") or existing_link.replace("/verify/", "/interview/"),
         "interview_url": application.get("interview_url") or existing_link.replace("/verify/", "/interview/"),
-        "token": application.get("interview_token") or "",
         "expiry_date": application.get("expiry_date") or "",
         "interview_date": application.get("interview_date") or "",
         "interview_time": application.get("interview_time") or "",
@@ -595,27 +698,48 @@ def _existing_interview_link_response(application: dict, existing_link: str) -> 
 
 @router.get("/validate-token/{token}")
 def validate_token(token: str):
+    print(f"[InterviewOpen] token={token}")
     link_data = _load_link_data(token)
 
     if not link_data:
-        return {
-            "success": False,
-            "message": "Invalid Interview Link",
-        }
+        return JSONResponse(
+            status_code=404,
+            content={"success": False, "message": "Interview link not found."},
+        )
+
+    final_questions = link_data.get("finalQuestions") or link_data.get("final_questions") or []
+    print(f"[InterviewOpen] matchedBy={link_data.get('_matchedBy') or 'unknown'}")
+    print(f"[InterviewOpen] interviewId={link_data.get('interviewId') or link_data.get('interview_id') or ''}")
+    print(f"[InterviewOpen] status={link_data.get('status') or link_data.get('interview_status') or ''}")
+    print(f"[InterviewOpen] finalQuestionsCount={len(final_questions) if isinstance(final_questions, list) else 0}")
 
     application = get_resume_application(link_data.get("application_id"))
 
     if not application:
-        return {
-            "success": False,
-            "message": "Application not found",
-        }
+        return JSONResponse(
+            status_code=404,
+            content={"success": False, "message": "Candidate not found for this interview link."},
+        )
+
+    job_id = link_data.get("jobId") or link_data.get("job_id") or application.get("jobId") or application.get("job_id")
+
+    if job_id and not get_job_by_id(str(job_id)):
+        return JSONResponse(
+            status_code=404,
+            content={"success": False, "message": "Job not found for this interview link."},
+        )
 
     if link_data.get("used") or _is_interview_completed(application):
-        return {
-            "success": False,
-            "message": "Interview Already Completed",
-        }
+        return JSONResponse(
+            status_code=409,
+            content={"success": False, "message": "Interview has already been completed."},
+        )
+
+    if not isinstance(final_questions, list) or not final_questions:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "Interview has no configured questions."},
+        )
 
     try:
         expiry_date = datetime.fromisoformat(str(link_data["expiry_date"]))
@@ -623,15 +747,17 @@ def validate_token(token: str):
         expiry_date = datetime.now() - timedelta(seconds=1)
 
     if datetime.now() > expiry_date:
-        return {
-            "success": False,
-            "message": "Interview Link Expired",
-        }
+        return JSONResponse(
+            status_code=410,
+            content={"success": False, "message": "Interview link expired."},
+        )
 
     return {
         "success": True,
         "message": "Interview Link Valid",
         "application_id": link_data["application_id"],
+        "interviewId": link_data.get("interviewId") or link_data.get("interview_id") or "",
+        "interviewLinkToken": get_interview_link_token(link_data),
         "candidate_name": link_data.get("candidate_name") or _get_candidate_name(application),
         "email": link_data.get("email") or application.get("email", ""),
         "expiry_date": link_data["expiry_date"],
@@ -1717,7 +1843,7 @@ def complete_interview(application_id: str):
     scores = [
         _extract_score(answer)
         for answer in interview_answers.values()
-        if isinstance(answer, dict) and _get_grading_status(answer) == "graded"
+        if isinstance(answer, dict) and answer.get("archived") is not True and _get_grading_status(answer) == "graded"
     ]
     average_score = round(sum(scores) / len(scores), 1) if scores else 0
     updates = {
@@ -1737,7 +1863,7 @@ def complete_interview(application_id: str):
         _current_attempt_snapshot({**application, **updates}, "complete", updates["interview_completed_at"]),
     )
 
-    token = application.get("interview_token")
+    token = get_interview_link_token(application)
 
     if token:
         _mark_link_used(token)
@@ -2543,6 +2669,10 @@ def _normalize_interview_status(application: dict | None) -> str:
 
 
 def _next_attempt_number(application: dict) -> int:
+    return _current_attempt_number(application) + 1
+
+
+def _current_attempt_number(application: dict) -> int:
     attempts = _attempt_history(application)
     numbers = [
         int(attempt.get("attempt_number") or 0)
@@ -2556,7 +2686,7 @@ def _next_attempt_number(application: dict) -> int:
     except (TypeError, ValueError):
         pass
 
-    return max(numbers or [0]) + 1
+    return max(numbers or [0]) or 1
 
 
 def _attempt_history(application: dict | list | None) -> list[dict]:
@@ -2602,7 +2732,7 @@ def _upsert_attempt_snapshot(attempts_value, snapshot: dict) -> list[dict]:
 def _current_attempt_snapshot(application: dict, status: str | None = None, timestamp: str | None = None) -> dict:
     normalized_status = _normalize_status_value(status or application.get("interview_status"), application)
     answers = application.get("interview_answers") if isinstance(application.get("interview_answers"), dict) else {}
-    has_link = bool(application.get("interview_link") or application.get("verification_link") or application.get("interview_token"))
+    has_link = bool(application.get("interview_link") or application.get("verification_link") or get_interview_link_token(application))
     has_answers = bool(answers)
     has_started = bool(application.get("interview_started_at") or application.get("interview_completed_at") or application.get("interview_quit_at"))
 
@@ -2613,7 +2743,7 @@ def _current_attempt_snapshot(application: dict, status: str | None = None, time
     attempt_id = str(
         application.get("active_attempt_id")
         or application.get("interview_session_id")
-        or application.get("interview_token")
+        or get_interview_link_token(application)
         or f"attempt-{application.get('attempt_number') or 1}"
     )
     try:
@@ -2637,7 +2767,7 @@ def _current_attempt_snapshot(application: dict, status: str | None = None, time
         "answered_count": answered_count,
         "total_questions": total_questions,
         "interview_link": application.get("interview_link") or application.get("verification_link") or "",
-        "interview_token": application.get("interview_token") or "",
+        "interview_token": get_interview_link_token(application),
         "interview_started_at": application.get("interview_started_at"),
         "interview_completed_at": application.get("interview_completed_at") or application.get("completedAt"),
         "interview_quit_at": application.get("interview_quit_at"),
@@ -2726,11 +2856,28 @@ def with_public_interview_fields(application: dict) -> dict:
     total_questions = _configured_question_count(application)
     completed_at = application.get("interview_completed_at") or application.get("completedAt") or application.get("completed_at")
     completed = _is_interview_completed(application)
+    interview_token = get_interview_link_token(application) or str(application.get("active_attempt_id") or application.get("currentInterviewId") or "").strip()
+    application_id = str(application.get("application_id") or application.get("candidateId") or "").strip()
+    job_id = application.get("jobId") or application.get("job_id") or ""
+    interview_id = str(application.get("currentInterviewId") or application.get("active_attempt_id") or application.get("interviewId") or application.get("interview_id") or interview_token or "").strip()
+    interview_link = (
+        application.get("interviewLink")
+        or application.get("interview_link")
+        or application.get("verification_link")
+        or _build_candidate_interview_link(application_id, interview_token)
+    )
     return {
         **application,
+        "candidateId": application_id,
+        "jobId": job_id,
+        "interviewId": interview_id,
+        "interviewLinkToken": interview_token,
+        "interviewLink": interview_link,
         "interview_status": status,
         "interviewStatus": status,
         "latestInterviewStatus": status,
+        "answeredCount": answered_count,
+        "totalQuestions": total_questions,
         "interview_completed": completed,
         "interviewCompleted": completed,
         "answeredCount": answered_count,
@@ -2747,6 +2894,14 @@ def with_public_interview_fields(application: dict) -> dict:
         "report_source_attempt_id": report_application.get("report_source_attempt_id") if report_application else "",
         "report_source_attempt_number": report_application.get("report_source_attempt_number") if report_application else None,
     }
+
+
+def _build_candidate_interview_link(application_id: str, token: str) -> str:
+    if not application_id or not token:
+        return ""
+
+    frontend_base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
+    return f"{frontend_base_url}/verify/{application_id}?attempt={token}"
 
 
 def _unanswered_answer_record(question: dict, index: int, question_id: str, timestamp: str) -> dict:
@@ -2807,6 +2962,9 @@ def _has_saved_answer(answer) -> bool:
     if not isinstance(answer, dict):
         return False
 
+    if answer.get("archived") is True:
+        return False
+
     text = str(
         answer.get("transcript")
         or answer.get("answerText")
@@ -2825,7 +2983,7 @@ def _average_configured_answer_scores(interview_answers: dict, total_questions: 
     scores = [
         _extract_score(answer)
         for answer in interview_answers.values()
-        if isinstance(answer, dict)
+        if isinstance(answer, dict) and answer.get("archived") is not True
     ]
 
     if len(scores) < total_questions:
@@ -2838,7 +2996,7 @@ def _average_answer_scores(interview_answers: dict) -> float:
     scores = [
         _extract_score(answer)
         for answer in interview_answers.values()
-        if isinstance(answer, dict) and _get_grading_status(answer) == "graded"
+        if isinstance(answer, dict) and answer.get("archived") is not True and _get_grading_status(answer) == "graded"
     ]
 
     return round(sum(scores) / len(scores), 1) if scores else 0
@@ -3038,10 +3196,8 @@ def _build_access_response(application: dict) -> dict:
 
 
 def _attempt_access_error(application: dict, attempt: str | None) -> dict | None:
-    active_attempt = str(application.get("active_attempt_id") or application.get("interview_token") or application.get("currentInterviewId") or "").strip()
+    active_attempt = str(application.get("active_attempt_id") or get_interview_link_token(application) or application.get("currentInterviewId") or "").strip()
     requested_attempt = str(attempt or "").strip()
-    previous_attempts = application.get("previousInterviewIds") or application.get("previous_interview_ids") or []
-    has_reschedule_history = bool(previous_attempts or application.get("rescheduled_at") or application.get("rescheduled_from"))
 
     if requested_attempt:
         if active_attempt and requested_attempt != active_attempt:
@@ -3052,13 +3208,6 @@ def _attempt_access_error(application: dict, attempt: str | None) -> dict | None
             }
 
         return None
-
-    if has_reschedule_history and active_attempt:
-        return {
-            "success": True,
-            "status": "expired",
-            "message": "This interview link has expired. Please use the latest interview link from HR.",
-        }
 
     return None
 
@@ -3350,10 +3499,14 @@ def _upsert_saved_answer(application: dict, payload: AnswerSaveRequest) -> dict:
     question_id = payload.question_id or f"q{payload.question_index}"
     existing = interview_answers.get(question_id) if isinstance(interview_answers.get(question_id), dict) else {}
     now = datetime.now().isoformat()
+    attempt_number = _current_attempt_number(application)
     answer = {
         **existing,
         "questionId": question_id,
         "question_id": question_id,
+        "attemptNumber": attempt_number,
+        "attempt_number": attempt_number,
+        "archived": False,
         "question_index": payload.question_index,
         "question": payload.question or existing.get("question") or "",
         "expectedAnswer": payload.expected_answer or existing.get("expectedAnswer") or existing.get("expected_answer") or "",
@@ -3390,6 +3543,7 @@ def _answered_count(application: dict) -> int:
         answer
         for answer in answers.values()
         if isinstance(answer, dict)
+        and answer.get("archived") is not True
         and str(answer.get("status") or answer.get("answer_status") or "").lower() != "unanswered"
         and str(answer.get("transcript") or answer.get("answerText") or answer.get("answer_text") or "").strip()
         and str(answer.get("transcript") or answer.get("answerText") or answer.get("answer_text") or "").strip().lower() != "not answered"

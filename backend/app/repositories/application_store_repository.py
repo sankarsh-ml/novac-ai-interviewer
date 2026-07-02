@@ -5,6 +5,7 @@ import uuid
 
 from app.infrastructure.storage.file_storage_service import delete_file_from_mongo
 from app.infrastructure.database.mongo_service import get_database, make_json_safe, mongo_now, public_document
+from app.utils.interview_tokens import get_interview_link_token, normalize_interview_token_fields
 
 
 def create_application(data: dict) -> str:
@@ -377,7 +378,8 @@ def _mirror_related_records(application_id: str, updates: dict) -> None:
             "interview_status",
         )
     ):
-        interview_id = str(application.get("interview_token") or application.get("interviewId") or application_id)
+        existing_token = get_interview_link_token(application)
+        interview_id = str(application.get("interviewId") or application.get("interview_id") or existing_token or application_id)
         config = application.get("interview_config") if isinstance(application.get("interview_config"), dict) else {}
         question_payload = application.get("interview_questions") if isinstance(application.get("interview_questions"), dict) else {}
         final_questions = (
@@ -386,51 +388,60 @@ def _mirror_related_records(application_id: str, updates: dict) -> None:
             or question_payload.get("questions")
             or []
         )
+        interview_values, unset_fields = normalize_interview_token_fields(
+            {
+                "interviewId": interview_id,
+                "candidateId": application_id,
+                "application_id": application_id,
+                "jobId": job_id,
+                "job_id": job_id,
+                "interviewLinkToken": existing_token,
+                "questionSource": application.get("questionSource") or application.get("question_source") or config.get("question_source"),
+                "question_source": application.get("question_source") or application.get("questionSource") or config.get("question_source"),
+                "selectedQuestionIds": application.get("selectedQuestionIds") or config.get("selected_question_ids") or [],
+                "selected_question_ids": application.get("selected_question_ids") or config.get("selected_question_ids") or [],
+                "generatedQuestions": application.get("generatedQuestions") or question_payload.get("generatedQuestions") or [],
+                "generated_questions": application.get("generated_questions") or question_payload.get("generated_questions") or [],
+                "difficultySplit": application.get("difficultySplit") or config.get("difficulty_split") or {},
+                "difficulty_split": application.get("difficulty_split") or config.get("difficulty_split") or {},
+                "questionCount": application.get("total_questions") or config.get("number_of_questions"),
+                "question_count": application.get("total_questions") or config.get("number_of_questions"),
+                "finalQuestions": final_questions,
+                "final_questions": final_questions,
+                "status": _interview_collection_status(application),
+                "startedAt": application.get("interview_started_at"),
+                "completedAt": application.get("interview_completed_at") or application.get("completedAt"),
+                "updatedAt": now,
+            },
+            generate_missing=True,
+        )
+        update_document = {
+            "$set": interview_values,
+            "$setOnInsert": {"createdAt": now},
+        }
+
+        if unset_fields:
+            update_document["$unset"] = unset_fields
+
         db.interviews.update_one(
             {"candidateId": application_id, "interviewId": interview_id},
-            {
-                "$set": {
-                    "interviewId": interview_id,
-                    "candidateId": application_id,
-                    "application_id": application_id,
-                    "jobId": job_id,
-                    "job_id": job_id,
-                    "interviewLinkToken": application.get("interview_token"),
-                    "token": application.get("interview_token"),
-                    "questionSource": application.get("questionSource") or application.get("question_source") or config.get("question_source"),
-                    "question_source": application.get("question_source") or application.get("questionSource") or config.get("question_source"),
-                    "selectedQuestionIds": application.get("selectedQuestionIds") or config.get("selected_question_ids") or [],
-                    "selected_question_ids": application.get("selected_question_ids") or config.get("selected_question_ids") or [],
-                    "generatedQuestions": application.get("generatedQuestions") or question_payload.get("generatedQuestions") or [],
-                    "generated_questions": application.get("generated_questions") or question_payload.get("generated_questions") or [],
-                    "difficultySplit": application.get("difficultySplit") or config.get("difficulty_split") or {},
-                    "difficulty_split": application.get("difficulty_split") or config.get("difficulty_split") or {},
-                    "questionCount": application.get("total_questions") or config.get("number_of_questions"),
-                    "question_count": application.get("total_questions") or config.get("number_of_questions"),
-                    "finalQuestions": final_questions,
-                    "final_questions": final_questions,
-                    "status": _interview_collection_status(application),
-                    "startedAt": application.get("interview_started_at"),
-                    "completedAt": application.get("interview_completed_at") or application.get("completedAt"),
-                    "updatedAt": now,
-                },
-                "$setOnInsert": {"createdAt": now},
-            },
+            update_document,
             upsert=True,
         )
         print(f"[Storage] Saved interview to MongoDB interviewId={interview_id}")
 
     if "interview_answers" in updates and isinstance(application.get("interview_answers"), dict):
-        interview_id = str(application.get("interview_token") or application.get("interviewId") or application_id)
+        interview_id = str(application.get("interviewId") or application.get("interview_id") or get_interview_link_token(application) or application_id)
 
         for question_id, answer in application["interview_answers"].items():
             if not isinstance(answer, dict):
                 continue
 
             question_index = answer.get("question_index") or answer.get("questionIndex") or 0
-            answer_id = f"{interview_id}:{question_id}"
+            attempt_number = answer.get("attemptNumber") or answer.get("attempt_number") or application.get("attemptNumber") or application.get("attempt_number") or 1
+            answer_id = f"{interview_id}:{attempt_number}:{question_id}"
             db.interview_answers.update_one(
-                {"answerId": answer_id},
+                {"answerId": answer_id, "archived": {"$ne": True}},
                 {
                     "$set": {
                         **make_json_safe(answer),
@@ -441,6 +452,9 @@ def _mirror_related_records(application_id: str, updates: dict) -> None:
                         "application_id": application_id,
                         "jobId": job_id,
                         "job_id": job_id,
+                        "attemptNumber": attempt_number,
+                        "attempt_number": attempt_number,
+                        "archived": False,
                         "questionIndex": question_index,
                         "question_index": question_index,
                         "question": answer.get("question"),

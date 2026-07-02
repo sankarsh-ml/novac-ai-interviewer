@@ -430,7 +430,7 @@ function App() {
             }
 
             const jobId = application.job_id || application.jobId || selectedJob?.id || selectedJob?.jobId || "";
-            const interviewId = application.active_attempt_id || application.interview_token || application.currentInterviewId || application.interviewId || "";
+            const interviewId = application.active_attempt_id || application.interviewLinkToken || application.interview_token || application.currentInterviewId || application.interviewId || "";
 
             if (jobId) {
               queryParams.set("jobId", jobId);
@@ -478,7 +478,7 @@ function App() {
     return (
       <main className="home-page">
         <section className="home-content">
-          <h1>Candidate link unavailable</h1>
+          <h1>Interview link unavailable</h1>
           <p className="subtitle">{linkValidationError}</p>
         </section>
       </main>

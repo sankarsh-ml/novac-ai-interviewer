@@ -581,7 +581,13 @@ function isReportReady(application) {
 
 
 function getInterviewLink(application) {
-  return application?.interview_link || application?.verification_link || "";
+  return (
+    application?.interviewLink ||
+    application?.interview_link ||
+    application?.verification_link ||
+    application?.link ||
+    ""
+  );
 }
 
 

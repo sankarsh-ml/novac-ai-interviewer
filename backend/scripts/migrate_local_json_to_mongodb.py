@@ -10,8 +10,9 @@ BACKEND_DIR = PROJECT_ROOT / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.services.mongo_service import get_database, make_json_safe, mongo_now
-from app.services.auth_service import create_or_update_admin
+from app.application.services.admin_service import create_or_update_admin
+from app.infrastructure.database.mongo_service import get_database, make_json_safe, mongo_now
+from app.utils.interview_tokens import get_interview_link_token
 
 
 APP_STORAGE_DIR = BACKEND_DIR / "app" / "storage"
@@ -139,7 +140,7 @@ def migrate_interview_links(db) -> int:
 
     for file_path in link_dir.glob("*.json"):
         data = _read_json_object(file_path)
-        token = str(data.get("token") or file_path.stem)
+        token = str(get_interview_link_token(data) or file_path.stem)
         candidate_id = str(data.get("application_id") or data.get("candidateId") or "")
 
         if not token:
@@ -149,13 +150,12 @@ def migrate_interview_links(db) -> int:
             **make_json_safe(data),
             "interviewId": data.get("interviewId") or token,
             "interviewLinkToken": token,
-            "token": token,
             "candidateId": candidate_id,
             "application_id": candidate_id,
             "updatedAt": mongo_now(),
         }
         db.interviews.update_one(
-            {"token": token},
+            {"interviewLinkToken": token},
             {"$set": document, "$setOnInsert": {"createdAt": mongo_now()}},
             upsert=True,
         )

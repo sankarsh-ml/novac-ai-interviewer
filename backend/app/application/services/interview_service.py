@@ -8,6 +8,14 @@ def upsert_interview_for_candidate(candidate_id: str, data: dict, insert_default
     interview_repository.upsert_interview_for_candidate(candidate_id, data, insert_defaults)
 
 
+def get_interview_by_id(interview_id: str) -> dict | None:
+    return interview_repository.get_interview_by_id(interview_id)
+
+
+def update_interview_attempt(interview_id: str, updates: dict) -> None:
+    interview_repository.update_interview_attempt(interview_id, updates)
+
+
 def get_link_by_token(token: str) -> dict | None:
     return interview_repository.get_link_by_token(token)
 

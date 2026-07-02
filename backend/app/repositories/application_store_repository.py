@@ -387,7 +387,7 @@ def _mirror_related_records(application_id: str, updates: dict) -> None:
             or []
         )
         db.interviews.update_one(
-            {"candidateId": application_id},
+            {"candidateId": application_id, "interviewId": interview_id},
             {
                 "$set": {
                     "interviewId": interview_id,

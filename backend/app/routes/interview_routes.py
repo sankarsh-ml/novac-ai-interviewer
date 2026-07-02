@@ -36,8 +36,10 @@ from app.application.services.question_bank_service import load_question_bank
 from app.application.services.qwen_service import is_qwen_available
 from app.application.services.whisper_service import transcribe_audio
 from app.application.services.interview_service import (
+    get_interview_by_id,
     get_link_by_token,
     mark_link_used,
+    update_interview_attempt,
     upsert_interview_for_candidate,
 )
 from app.core.config import get_path
@@ -133,6 +135,26 @@ class ConfigureQuestionsRequest(BaseModel):
     identityConfig: IdentityConfigRequest | dict | None = None
     identity_verification_required: bool | None = None
     identityVerificationRequired: bool | None = None
+
+
+class RescheduleInterviewRequest(ConfigureQuestionsRequest):
+    application_id: str = ""
+    candidateId: str = ""
+    candidate_id: str = ""
+    jobId: str = ""
+    job_id: str = ""
+    interviewId: str = ""
+    interview_id: str = ""
+    candidate_name: str = ""
+    email: str = ""
+    expiry_date: str | None = None
+    interview_date: str | None = None
+    interview_time: str | None = None
+    interview_scheduled_at: str | None = None
+    scheduledAt: str | None = None
+    scheduled_at: str | None = None
+    durationMinutes: Any = None
+    duration_minutes: Any = None
 
 
 @router.post("/create-link")
@@ -297,16 +319,62 @@ def create_interview_link(payload: CreateInterviewLinkRequest):
 
 
 @router.post("/reschedule-link")
-def reschedule_interview_link(payload: CreateInterviewLinkRequest):
-    application = get_resume_application(payload.application_id)
+def reschedule_interview_link(payload: RescheduleInterviewRequest):
+    return _reschedule_interview_attempt(payload, payload.interviewId or payload.interview_id)
+
+
+@router.post("/{interview_id}/reschedule")
+def reschedule_interview_by_id(interview_id: str, payload: RescheduleInterviewRequest):
+    return _reschedule_interview_attempt(payload, interview_id)
+
+
+def _reschedule_interview_attempt(payload: RescheduleInterviewRequest, interview_id: str | None = None):
+    application_id = str(payload.application_id or payload.candidateId or payload.candidate_id or "").strip()
+    old_interview = get_interview_by_id(str(interview_id or "").strip())
+
+    if not application_id and old_interview:
+        application_id = str(old_interview.get("application_id") or old_interview.get("candidateId") or "").strip()
+
+    if not application_id:
+        raise HTTPException(status_code=400, detail="Cannot reschedule because candidate or job information is missing.")
+
+    application = get_resume_application(application_id)
 
     if not application:
-        raise HTTPException(status_code=404, detail="Application not found")
+        raise HTTPException(status_code=404, detail="Interview not found.")
 
-    current_status = _normalize_interview_status(application)
+    old_interview_id = str(
+        interview_id
+        or payload.interviewId
+        or payload.interview_id
+        or application.get("active_attempt_id")
+        or application.get("interview_token")
+        or application.get("interviewId")
+        or ""
+    ).strip()
 
-    if current_status not in {"not_started", "partial", "complete"}:
-        current_status = "not_started"
+    if not old_interview:
+        old_interview = get_interview_by_id(old_interview_id)
+
+    if not old_interview:
+        raise HTTPException(status_code=404, detail="Interview not found.")
+
+    if not (application.get("job_id") or application.get("jobId") or payload.job_id or payload.jobId):
+        raise HTTPException(status_code=400, detail="Cannot reschedule because candidate or job information is missing.")
+
+    if _is_interview_completed(application) or _is_interview_completed({**application, **old_interview}):
+        raise HTTPException(status_code=400, detail="Completed interviews cannot be rescheduled.")
+
+    can_reschedule, rejection_message = _can_reschedule_interview(application)
+
+    if not can_reschedule:
+        raise HTTPException(status_code=400, detail=rejection_message)
+
+    if payload.scheduledAt and not payload.interview_scheduled_at:
+        payload.interview_scheduled_at = payload.scheduledAt
+
+    if payload.scheduled_at and not payload.interview_scheduled_at:
+        payload.interview_scheduled_at = payload.scheduled_at
 
     schedule = _normalize_schedule(payload, application)
 
@@ -319,21 +387,147 @@ def reschedule_interview_link(payload: CreateInterviewLinkRequest):
             detail="Set a proper interview date and time. This interview schedule is already expired.",
         )
 
-    archived_attempts = _archive_current_attempt(application, current_status)
+    configuration = _build_interview_configuration(application_id, application, payload)
+    question_source = configuration["question_source"]
+    selected_ids = configuration["selected_ids"]
+    interview_config = configuration["interview_config"]
+    interview_payload = configuration["interview_payload"]
+    final_questions = configuration["questions"]
+    identity_config = configuration["identity_config"]
+    requested_count = configuration["requested_count"]
+    split = configuration["difficulty_split"]
+    duration_minutes = _parse_positive_question_count(payload.durationMinutes or payload.duration_minutes)
+    previous_interview_id = old_interview_id or str(old_interview.get("interviewId") or old_interview.get("token") or "")
+    new_token = uuid.uuid4().hex
+    attempt_number = _next_attempt_number(application)
+    expiry_date = _normalize_expiry_date(payload.expiry_date)
+    frontend_base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:5173").rstrip("/")
+    verification_url = f"{frontend_base_url}/verify/{application_id}?attempt={new_token}"
+    interview_url = f"{frontend_base_url}/interview/{application_id}?attempt={new_token}"
+    now = datetime.now().isoformat()
+    current_status = _normalize_interview_status(application)
+    snapshot = _current_attempt_snapshot(application, current_status, now)
+
+    if snapshot:
+        snapshot = {
+            **snapshot,
+            "reschedule_status": "rescheduled",
+            "rescheduled_at": now,
+            "rescheduled_to_interview_id": new_token,
+            "rescheduledToInterviewId": new_token,
+        }
+        archived_attempts = _upsert_attempt_snapshot(application.get("interview_attempts"), snapshot)
+    else:
+        archived_attempts = _archive_current_attempt(application, current_status)
+
+    update_interview_attempt(
+        previous_interview_id,
+        {
+            "status": "rescheduled",
+            "interview_status": "rescheduled",
+            "rescheduledAt": now,
+            "rescheduled_at": now,
+            "rescheduledToInterviewId": new_token,
+            "rescheduled_to_interview_id": new_token,
+        },
+    )
+
+    previous_ids = [
+        str(value)
+        for value in (application.get("previousInterviewIds") or application.get("previous_interview_ids") or [])
+        if str(value or "").strip()
+    ]
+
+    if previous_interview_id and previous_interview_id not in previous_ids:
+        previous_ids.append(previous_interview_id)
+
+    new_interview_data = {
+        "token": new_token,
+        "interviewId": new_token,
+        "interview_id": new_token,
+        "candidateId": application_id,
+        "application_id": application_id,
+        "candidate_name": payload.candidate_name or _get_candidate_name(application),
+        "email": payload.email or application.get("email", ""),
+        "jobId": application.get("jobId") or application.get("job_id") or payload.jobId or payload.job_id,
+        "job_id": application.get("job_id") or application.get("jobId") or payload.job_id or payload.jobId,
+        "previousInterviewId": previous_interview_id,
+        "previous_interview_id": previous_interview_id,
+        "rescheduledFrom": previous_interview_id,
+        "rescheduled_from": previous_interview_id,
+        "attemptNumber": attempt_number,
+        "attempt_number": attempt_number,
+        "expiry_date": expiry_date,
+        "interview_date": schedule["date"],
+        "interview_time": schedule["time"],
+        "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
+        "scheduledAt": schedule["scheduled_at"].isoformat(),
+        "durationMinutes": duration_minutes,
+        "duration_minutes": duration_minutes,
+        "used": False,
+        "link": verification_url,
+        "verification_url": verification_url,
+        "interview_url": interview_url,
+        "interviewLinkToken": new_token,
+        "status": "configured",
+        "questionSource": question_source,
+        "question_source": question_source,
+        "difficultySplit": split,
+        "difficulty_split": split,
+        "selectedQuestionIds": selected_ids,
+        "selected_question_ids": selected_ids,
+        "questionCount": requested_count,
+        "question_count": requested_count,
+        "finalQuestions": final_questions,
+        "final_questions": final_questions,
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
+    }
+    upsert_interview_for_candidate(application_id, new_interview_data, {"createdAt": now})
+
     update_application(
-        payload.application_id,
+        application_id,
         {
             "interview_attempts": archived_attempts,
-            "interview_link": "",
-            "verification_link": "",
-            "interview_token": "",
-            "interview_link_generated": False,
-            "interview_link_generated_at": None,
-            "interview_answers": {},
+            "previousInterviewIds": previous_ids,
+            "previous_interview_ids": previous_ids,
+            "currentInterviewId": new_token,
+            "current_interview_id": new_token,
+            "previousInterviewId": previous_interview_id,
+            "previous_interview_id": previous_interview_id,
+            "interviewId": new_token,
+            "interview_id": new_token,
+            "interview_config": interview_config,
+            "interview_questions": interview_payload,
+            "interviewQuestions": final_questions,
+            "generatedQuestions": interview_payload.get("generatedQuestions") or [],
+            "generated_questions": interview_payload.get("generated_questions") or [],
+            "finalQuestions": final_questions,
+            "final_questions": final_questions,
+            "question_source": question_source,
+            "questionSource": question_source,
+            "selectedQuestionIds": selected_ids,
+            "selected_question_ids": selected_ids,
+            "difficultySplit": split,
+            "difficulty_split": split,
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
+            "total_questions": requested_count,
+            "interview_link": verification_url,
+            "verification_link": verification_url,
+            "interview_url": interview_url,
+            "interview_token": new_token,
+            "expiry_date": expiry_date,
+            "interview_date": schedule["date"],
+            "interview_time": schedule["time"],
+            "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
+            "interview_link_generated": True,
+            "interview_link_generated_at": now,
             "interview_status": "not_started",
             "interviewStatus": "not_started",
             "interview_completed": False,
             "interviewCompleted": False,
+            "interview_answers": {},
             "interview_score": 0,
             "average_interview_score": 0,
             "answered_count": 0,
@@ -344,25 +538,37 @@ def reschedule_interview_link(payload: CreateInterviewLinkRequest):
             "interview_quit_at": None,
             "interview_last_seen_at": None,
             "interview_session_id": "",
-            "active_attempt_id": "",
-            "rescheduled_at": datetime.now().isoformat(),
-            "interview_date": schedule["date"],
-            "interview_time": schedule["time"],
-            "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
+            "active_attempt_id": new_token,
+            "attempt_number": attempt_number,
+            "rescheduled_at": now,
+            "rescheduled_from": previous_interview_id,
         },
     )
 
-    refreshed = get_resume_application(payload.application_id) or application
-    payload.candidate_name = payload.candidate_name or refreshed.get("candidate_name") or _get_candidate_name(refreshed)
-    payload.email = payload.email or refreshed.get("email", "")
-    payload.interview_date = schedule["date"]
-    payload.interview_time = schedule["time"]
-    payload.interview_scheduled_at = schedule["scheduled_at"].isoformat()
-
-    response = create_interview_link(payload)
-    response["rescheduled"] = True
-    response["previous_interview_status"] = current_status
-    return response
+    return {
+        "success": True,
+        "rescheduled": True,
+        "link": verification_url,
+        "verificationUrl": verification_url,
+        "verification_url": verification_url,
+        "interviewUrl": interview_url,
+        "interview_url": interview_url,
+        "token": new_token,
+        "interviewId": new_token,
+        "previousInterviewId": previous_interview_id,
+        "expiry_date": expiry_date,
+        "interview_date": schedule["date"],
+        "interview_time": schedule["time"],
+        "interview_scheduled_at": schedule["scheduled_at"].isoformat(),
+        "interview_link_generated": True,
+        "already_generated": False,
+        "interview_status": "not_started",
+        "attempt_number": attempt_number,
+        "active_attempt_id": new_token,
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
+        "message": "Interview rescheduled. A fresh interview link has been generated.",
+    }
 
 
 def _existing_interview_link_response(application: dict, existing_link: str) -> dict:
@@ -435,11 +641,16 @@ def validate_token(token: str):
 
 
 @router.get("/access/{application_id}")
-def check_interview_access(application_id: str):
+def check_interview_access(application_id: str, attempt: str | None = None):
     application = get_resume_application(application_id)
 
     if not application:
         raise HTTPException(status_code=404, detail="Application not found")
+
+    attempt_error = _attempt_access_error(application, attempt)
+
+    if attempt_error:
+        return attempt_error
 
     return _build_access_response(application)
 
@@ -1763,6 +1974,156 @@ def _get_configured_question_payload(application: dict) -> dict | None:
     return None
 
 
+def _build_interview_configuration(application_id: str, application: dict, payload: ConfigureQuestionsRequest) -> dict:
+    question_source = _normalize_question_source(payload.questionSource or payload.question_source)
+    requested_count = _parse_positive_question_count(payload.questionCount if question_source == "qwen_generated" else payload.number_of_questions)
+
+    if requested_count is None:
+        requested_count = _parse_positive_question_count(payload.number_of_questions or payload.questionCount)
+
+    if requested_count is None or requested_count <= 0:
+        raise HTTPException(status_code=400, detail="Number of questions must be greater than zero.")
+
+    identity_config = normalize_requested_identity_config(application, payload)
+
+    if _identity_skip_requested(payload) and not identity_config["resumePhotoAvailable"]:
+        raise HTTPException(status_code=400, detail=RESUME_PHOTO_REQUIRED_MESSAGE)
+
+    filters_used = payload.filters_used.model_dump() if hasattr(payload.filters_used, "model_dump") else {}
+    configured_at = datetime.now().isoformat()
+
+    if question_source == "qwen_generated":
+        split = _difficulty_split_dict(payload.difficultySplit or payload.difficulty_split)
+        split_total = sum(split.values())
+
+        if split_total <= 0:
+            raise HTTPException(status_code=400, detail="At least one Qwen-generated question is required.")
+
+        if split_total != requested_count:
+            raise HTTPException(
+                status_code=400,
+                detail="Difficulty split must add up to the total number of interview questions.",
+            )
+
+        result = generate_qwen_interview_questions(application, split, requested_count)
+
+        if not result.get("success"):
+            bank_empty = len(load_question_bank(str(application.get("job_id") or ""))) == 0
+            message = (
+                "Question bank is empty and Qwen generation failed. Please add questions to the bank or try again."
+                if bank_empty
+                else result.get("message") or "Question generation failed. Please try again or use question bank selection."
+            )
+            raise HTTPException(status_code=503, detail=message)
+
+        generated_questions = [
+            _snapshot_question(question, index)
+            for index, question in enumerate(result.get("questions") or [], start=1)
+        ]
+        interview_payload = {
+            "success": True,
+            "status": "success",
+            "source": "qwen_generated",
+            "question_source": "qwen_generated",
+            "candidate_name": _get_candidate_name(application),
+            "difficulty_split": split,
+            "questions": generated_questions,
+            "generatedQuestions": generated_questions,
+            "generated_questions": generated_questions,
+            "finalQuestions": generated_questions,
+            "final_questions": generated_questions,
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
+            "configured_at": configured_at,
+        }
+        interview_config = {
+            "number_of_questions": requested_count,
+            "question_source": "qwen_generated",
+            "difficulty_split": split,
+            "selected_question_ids": [],
+            "filters_used": filters_used,
+            "identityConfig": identity_config,
+            "identity_config": identity_config,
+            "configured_at": configured_at,
+        }
+        return {
+            "question_source": "qwen_generated",
+            "requested_count": requested_count,
+            "selected_ids": [],
+            "difficulty_split": split,
+            "questions": generated_questions,
+            "interview_payload": interview_payload,
+            "interview_config": interview_config,
+            "identity_config": identity_config,
+        }
+
+    raw_selected_ids = payload.selectedQuestionIds or payload.selected_question_ids
+    selected_ids = [str(question_id).strip() for question_id in raw_selected_ids if str(question_id).strip()]
+
+    if len(set(selected_ids)) != len(selected_ids):
+        raise HTTPException(status_code=400, detail="Selected questions must be unique.")
+
+    if len(selected_ids) != requested_count:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Select exactly {requested_count} question(s) before generating the link.",
+        )
+
+    job_id = str(application.get("job_id") or application.get("jobId") or "")
+    bank_questions = load_question_bank(job_id)
+    question_by_id = {
+        str(question.get("_id") or question.get("id") or question.get("question_id")): question
+        for question in bank_questions
+    }
+    missing_ids = [question_id for question_id in selected_ids if question_id not in question_by_id]
+
+    if missing_ids:
+        raise HTTPException(status_code=404, detail=f"Questions not found: {', '.join(missing_ids)}")
+
+    selected_questions = [
+        _snapshot_question(question_by_id[question_id], index)
+        for index, question_id in enumerate(selected_ids, start=1)
+    ]
+    interview_payload = {
+        "success": True,
+        "status": "success",
+        "source": "question_bank",
+        "question_source": "question_bank",
+        "candidate_name": _get_candidate_name(application),
+        "question_bank_id": job_id,
+        "question_bank_name": str(application.get("job_role") or application.get("job_title") or "Question Bank"),
+        "questions": selected_questions,
+        "selectedQuestionIds": selected_ids,
+        "selected_question_ids": selected_ids,
+        "finalQuestions": selected_questions,
+        "final_questions": selected_questions,
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
+        "configured_at": configured_at,
+    }
+    interview_config = {
+        "number_of_questions": requested_count,
+        "question_source": "question_bank",
+        "selected_question_ids": selected_ids,
+        "selectedQuestionIds": selected_ids,
+        "filters_used": filters_used,
+        "identityConfig": identity_config,
+        "identity_config": identity_config,
+        "configured_at": configured_at,
+    }
+
+    return {
+        "question_source": "question_bank",
+        "requested_count": requested_count,
+        "selected_ids": selected_ids,
+        "difficulty_split": {},
+        "questions": selected_questions,
+        "interview_payload": interview_payload,
+        "interview_config": interview_config,
+        "identity_config": identity_config,
+    }
+
+
 def _normalize_question_source(value: str) -> str:
     source = str(value or "question_bank").strip().lower()
     return "qwen_generated" if source in {"qwen", "qwen_generated", "ai", "ai_generated"} else "question_bank"
@@ -2154,7 +2515,7 @@ def _normalize_status_value(value, application: dict | None = None) -> str:
     if status in {"complete", "completed"}:
         return "complete"
 
-    if status in {"partial", "quit", "interrupted"}:
+    if status in {"partial", "abandoned", "quit", "quit_midway", "interrupted"}:
         return "partial"
 
     if status in {"not_started", "not started", "link_created", "configured", "pending", ""}:
@@ -2170,7 +2531,9 @@ def _normalize_interview_status(application: dict | None) -> str:
     if not isinstance(application, dict):
         return "not_started"
 
-    if application.get("interview_completed") is True or application.get("interviewCompleted") is True:
+    total_questions = _configured_question_count(application)
+
+    if _has_completion_marker(application) or (total_questions > 0 and _answered_count(application) >= total_questions):
         return "complete"
 
     return _normalize_status_value(
@@ -2359,12 +2722,25 @@ def with_public_interview_fields(application: dict) -> dict:
 
     status = _normalize_interview_status(application)
     report_application = select_report_application(application)
+    answered_count = _answered_count(application)
+    total_questions = _configured_question_count(application)
+    completed_at = application.get("interview_completed_at") or application.get("completedAt") or application.get("completed_at")
+    completed = _is_interview_completed(application)
     return {
         **application,
         "interview_status": status,
         "interviewStatus": status,
-        "interview_completed": status == "complete",
-        "interviewCompleted": status == "complete",
+        "latestInterviewStatus": status,
+        "interview_completed": completed,
+        "interviewCompleted": completed,
+        "answeredCount": answered_count,
+        "answered_count": answered_count,
+        "totalQuestions": total_questions,
+        "total_questions": total_questions,
+        "completedAt": completed_at,
+        "completed_at": completed_at,
+        "canReschedule": not completed,
+        "can_reschedule": not completed,
         "report_available": report_application is not None,
         "has_report": report_application is not None,
         "report_status": report_application.get("interview_status") if report_application else "",
@@ -2491,7 +2867,72 @@ def _safe_audio_extension(filename: str | None) -> str:
 
 
 def _is_interview_completed(application: dict) -> bool:
-    return _normalize_interview_status(application) == "complete"
+    if not isinstance(application, dict):
+        return False
+
+    if _has_completion_marker(application):
+        return True
+
+    total_questions = _configured_question_count(application)
+    return total_questions > 0 and _answered_count(application) >= total_questions
+
+
+def _has_completion_marker(application: dict) -> bool:
+    if not isinstance(application, dict):
+        return False
+
+    status = str(
+        application.get("interview_status")
+        or application.get("interviewStatus")
+        or application.get("status")
+        or ""
+    ).strip().lower()
+    report_status = str(
+        application.get("report_status")
+        or application.get("reportStatus")
+        or application.get("final_report_status")
+        or application.get("finalReportStatus")
+        or ""
+    ).strip().lower()
+
+    return (
+        application.get("interview_completed") is True
+        or application.get("interviewCompleted") is True
+        or bool(application.get("interview_completed_at") or application.get("completedAt") or application.get("completed_at"))
+        or status in {"complete", "completed"}
+        or report_status in {"complete", "completed"}
+        or application.get("completed_report_generated") is True
+        or application.get("completedReportGenerated") is True
+    )
+
+
+def _configured_question_count(application: dict) -> int:
+    if not isinstance(application, dict):
+        return 0
+
+    for key in ("finalQuestions", "final_questions"):
+        questions = application.get(key)
+
+        if isinstance(questions, list):
+            return len([question for question in questions if isinstance(question, dict)])
+
+    question_payload = application.get("interview_questions") if isinstance(application.get("interview_questions"), dict) else {}
+    questions = question_payload.get("questions") if isinstance(question_payload.get("questions"), list) else []
+
+    if questions:
+        return len([question for question in questions if isinstance(question, dict)])
+
+    try:
+        return int(application.get("total_questions") or application.get("questionCount") or application.get("question_count") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _can_reschedule_interview(application: dict) -> tuple[bool, str]:
+    if _is_interview_completed(application):
+        return False, "Completed interviews cannot be rescheduled."
+
+    return True, ""
 
 
 def _is_verification_completed(application: dict) -> bool:
@@ -2594,6 +3035,32 @@ def _build_access_response(application: dict) -> dict:
         response["scheduled_time_label"] = schedule["scheduled_at"].strftime("%I:%M %p").lstrip("0")
 
     return response
+
+
+def _attempt_access_error(application: dict, attempt: str | None) -> dict | None:
+    active_attempt = str(application.get("active_attempt_id") or application.get("interview_token") or application.get("currentInterviewId") or "").strip()
+    requested_attempt = str(attempt or "").strip()
+    previous_attempts = application.get("previousInterviewIds") or application.get("previous_interview_ids") or []
+    has_reschedule_history = bool(previous_attempts or application.get("rescheduled_at") or application.get("rescheduled_from"))
+
+    if requested_attempt:
+        if active_attempt and requested_attempt != active_attempt:
+            return {
+                "success": True,
+                "status": "expired",
+                "message": "This interview link has expired. Please contact HR.",
+            }
+
+        return None
+
+    if has_reschedule_history and active_attempt:
+        return {
+            "success": True,
+            "status": "expired",
+            "message": "This interview link has expired. Please use the latest interview link from HR.",
+        }
+
+    return None
 
 
 def _get_schedule_access_status(application: dict, scheduled_at: datetime | None) -> dict:

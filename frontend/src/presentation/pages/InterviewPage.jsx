@@ -5,13 +5,12 @@ import { useDependencies } from "@presentation/hooks/useDependencies.js";
 import "@presentation/styles/InterviewPage.css";
 
 
-function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
+function InterviewPage({ applicationSummary, cameraSession }) {
   const { interviewRepository } = useDependencies();
   const captureLivenessReference = (...args) => interviewUseCases.captureLivenessReference(interviewRepository, ...args);
   const checkLivenessFrame = (...args) => interviewUseCases.checkLivenessFrame(interviewRepository, ...args);
   const completeInterview = (...args) => interviewUseCases.completeInterview(interviewRepository, ...args);
   const evaluateInterviewAnswer = (...args) => interviewUseCases.evaluateInterviewAnswer(interviewRepository, ...args);
-  const quitInterview = (...args) => interviewUseCases.quitInterview(interviewRepository, ...args);
   const quitInterviewWithBeacon = (...args) => interviewUseCases.quitInterviewWithBeacon(interviewRepository, ...args);
   const saveInterviewAnswer = (...args) => interviewUseCases.saveInterviewAnswer(interviewRepository, ...args);
   const sendInterviewHeartbeat = (...args) => interviewUseCases.sendInterviewHeartbeat(interviewRepository, ...args);
@@ -878,19 +877,6 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
     }
   };
 
-  const handleBackHome = async () => {
-    if (isInterviewStarted && !interviewCompleted) {
-      try {
-        await quitInterview(applicationSummary?.application_id);
-      } catch (error) {
-        console.error("Could not mark partial interview:", error);
-      }
-    }
-
-    stopCamera();
-    onBackHome();
-  };
-
   const currentQuestion = questions[currentQuestionIndex];
   const isFinalQuestion = currentQuestionIndex === questions.length - 1;
   const sourceText = getQuestionSourceText(questionSource);
@@ -912,12 +898,6 @@ function InterviewPage({ applicationSummary, cameraSession, onBackHome }) {
   return (
     <main className="interview-page">
       <section className={`interview-panel ${isInterviewStarted ? "active" : "precheck"}`}>
-        {!interviewCompleted && (
-          <button className="back-button" type="button" onClick={handleBackHome}>
-            Back Home
-          </button>
-        )}
-
         {!isInterviewStarted && (
           <PreInterviewView
             videoRef={videoRef}

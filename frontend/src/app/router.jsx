@@ -268,7 +268,6 @@ function App() {
     return (
       <AadhaarUploadPage
         applicationSummary={applicationSummary}
-        onBackHome={handleBackHome}
         onVerified={(summary) => {
           setAadhaarSummary(summary);
           setApplicationSummary((currentSummary) => ({
@@ -297,7 +296,6 @@ function App() {
       <FaceVerificationPage
         applicationSummary={applicationSummary}
         cameraSession={cameraSession}
-        onBackHome={handleBackHome}
         onVerified={(summary) => {
           const governmentIdRequired = isGovernmentIdRequired(applicationSummary);
           setApplicationSummary((currentSummary) => ({
@@ -331,7 +329,6 @@ function App() {
         applicationSummary={applicationSummary}
         aadhaarSummary={aadhaarSummary}
         cameraSession={cameraSession}
-        onBackHome={handleBackHome}
       />
     );
   }

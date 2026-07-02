@@ -7,7 +7,7 @@ import "@presentation/styles/AadhaarUploadPage.css";
 import "@presentation/styles/InterviewPage.css";
 
 
-function FaceVerificationPage({ applicationSummary, cameraSession, onBackHome, onVerified }) {
+function FaceVerificationPage({ applicationSummary, cameraSession, onVerified }) {
   const { identityRepository, interviewRepository } = useDependencies();
   const videoRef = useRef(null);
   const isRequestInFlightRef = useRef(false);
@@ -39,9 +39,6 @@ function FaceVerificationPage({ applicationSummary, cameraSession, onBackHome, o
         <section className="aadhaar-panel">
           <h1>Face Verification</h1>
           <p className="aadhaar-message">No candidate application is available.</p>
-          <button className="aadhaar-home-button" type="button" onClick={onBackHome}>
-            Back Home
-          </button>
         </section>
       </main>
     );
@@ -148,10 +145,6 @@ function FaceVerificationPage({ applicationSummary, cameraSession, onBackHome, o
   return (
     <main className="aadhaar-page">
       <section className="aadhaar-panel">
-        <button className="back-button" type="button" onClick={onBackHome}>
-          Back Home
-        </button>
-
         <header className="aadhaar-header">
           <p className="eyebrow">Identity Check</p>
           <h1>Face Verification</h1>

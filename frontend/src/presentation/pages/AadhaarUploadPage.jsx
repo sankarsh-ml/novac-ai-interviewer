@@ -9,7 +9,7 @@ import "@presentation/styles/AadhaarUploadPage.css";
 const ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".pdf"];
 
 
-function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
+function AadhaarUploadPage({ applicationSummary, onVerified }) {
   const { identityRepository } = useDependencies();
   const [file, setFile] = useState(null);
   const [error, setError] = useState("");
@@ -27,9 +27,6 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
         <section className="aadhaar-panel">
           <h1>Indian Government ID Verification</h1>
           <p className="aadhaar-message">No resume application is available.</p>
-          <button className="aadhaar-home-button" type="button" onClick={onBackHome}>
-            Back Home
-          </button>
         </section>
       </main>
     );
@@ -78,10 +75,6 @@ function AadhaarUploadPage({ applicationSummary, onBackHome, onVerified }) {
   return (
     <main className="aadhaar-page">
       <section className="aadhaar-panel">
-        <button className="back-button" type="button" onClick={onBackHome}>
-          Back Home
-        </button>
-
         <header className="aadhaar-header">
           <p className="eyebrow">Identity Check</p>
           <h1>Indian Government ID Verification</h1>

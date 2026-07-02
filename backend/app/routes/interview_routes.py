@@ -371,6 +371,9 @@ def _reschedule_interview_attempt(payload: RescheduleInterviewRequest, interview
     if _is_interview_completed(application) or _is_interview_completed({**application, **old_interview}):
         raise HTTPException(status_code=400, detail="Completed interviews cannot be rescheduled.")
 
+    if not _has_scheduled_interview({**application, **old_interview}):
+        raise HTTPException(status_code=400, detail="Interview has not been scheduled yet.")
+
     can_reschedule, rejection_message = _can_reschedule_interview(application)
 
     if not can_reschedule:
@@ -2860,6 +2863,7 @@ def with_public_interview_fields(application: dict) -> dict:
     application_id = str(application.get("application_id") or application.get("candidateId") or "").strip()
     job_id = application.get("jobId") or application.get("job_id") or ""
     interview_id = str(application.get("currentInterviewId") or application.get("active_attempt_id") or application.get("interviewId") or application.get("interview_id") or interview_token or "").strip()
+    scheduled = _has_scheduled_interview(application)
     interview_link = (
         application.get("interviewLink")
         or application.get("interview_link")
@@ -2878,6 +2882,8 @@ def with_public_interview_fields(application: dict) -> dict:
         "latestInterviewStatus": status,
         "answeredCount": answered_count,
         "totalQuestions": total_questions,
+        "scheduledAt": application.get("scheduledAt") or application.get("scheduled_at") or application.get("interview_scheduled_at") or "",
+        "configuredAt": _configured_at(application),
         "interview_completed": completed,
         "interviewCompleted": completed,
         "answeredCount": answered_count,
@@ -2886,14 +2892,53 @@ def with_public_interview_fields(application: dict) -> dict:
         "total_questions": total_questions,
         "completedAt": completed_at,
         "completed_at": completed_at,
-        "canReschedule": not completed,
-        "can_reschedule": not completed,
+        "canReschedule": scheduled and not completed,
+        "can_reschedule": scheduled and not completed,
         "report_available": report_application is not None,
         "has_report": report_application is not None,
         "report_status": report_application.get("interview_status") if report_application else "",
         "report_source_attempt_id": report_application.get("report_source_attempt_id") if report_application else "",
         "report_source_attempt_number": report_application.get("report_source_attempt_number") if report_application else None,
     }
+
+
+def _has_scheduled_interview(application: dict) -> bool:
+    if not isinstance(application, dict):
+        return False
+
+    final_questions = application.get("finalQuestions") or application.get("final_questions")
+    question_payload = application.get("interview_questions") if isinstance(application.get("interview_questions"), dict) else {}
+    payload_questions = question_payload.get("questions") if isinstance(question_payload.get("questions"), list) else []
+
+    return bool(
+        get_interview_link_token(application)
+        or application.get("interviewLink")
+        or application.get("interview_link")
+        or application.get("verification_link")
+        or application.get("link")
+        or application.get("interview_link_generated")
+        or application.get("linkGenerated")
+        or application.get("scheduledAt")
+        or application.get("scheduled_at")
+        or application.get("interview_scheduled_at")
+        or _configured_at(application)
+        or (isinstance(final_questions, list) and len(final_questions) > 0)
+        or len(payload_questions) > 0
+    )
+
+
+def _configured_at(application: dict) -> str:
+    config = application.get("interview_config") if isinstance(application.get("interview_config"), dict) else {}
+    questions = application.get("interview_questions") if isinstance(application.get("interview_questions"), dict) else {}
+    return str(
+        application.get("configuredAt")
+        or application.get("configured_at")
+        or config.get("configured_at")
+        or config.get("configuredAt")
+        or questions.get("configured_at")
+        or questions.get("configuredAt")
+        or ""
+    )
 
 
 def _build_candidate_interview_link(application_id: str, token: str) -> str:
@@ -3089,6 +3134,9 @@ def _configured_question_count(application: dict) -> int:
 def _can_reschedule_interview(application: dict) -> tuple[bool, str]:
     if _is_interview_completed(application):
         return False, "Completed interviews cannot be rescheduled."
+
+    if not _has_scheduled_interview(application):
+        return False, "Interview has not been scheduled yet."
 
     return True, ""
 

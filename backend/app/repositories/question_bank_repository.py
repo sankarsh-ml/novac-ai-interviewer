@@ -24,7 +24,8 @@ def replace_for_job(job_id: str, questions: list[dict]) -> None:
 
 
 def list_for_job(job_id: str) -> list[dict]:
-    documents = get_database().question_bank.find(_job_query(job_id)).sort("created_at", 1)
+    query = _job_or_global_query(job_id) if str(job_id or "").strip() else {}
+    documents = get_database().question_bank.find(query).sort("created_at", 1)
     return [item for item in (public_document(document) for document in documents) if item]
 
 
@@ -34,3 +35,17 @@ def clear_for_job(job_id: str) -> int:
 
 def _job_query(job_id: str) -> dict:
     return {"$or": [{"job_id": str(job_id or "")}, {"jobId": str(job_id or "")}]}
+
+
+def _job_or_global_query(job_id: str) -> dict:
+    value = str(job_id or "")
+    return {
+        "$or": [
+            {"job_id": value},
+            {"jobId": value},
+            {"job_id": ""},
+            {"jobId": ""},
+            {"job_id": {"$exists": False}},
+            {"jobId": {"$exists": False}},
+        ]
+    }

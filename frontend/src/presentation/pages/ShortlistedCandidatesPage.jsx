@@ -560,10 +560,7 @@ function formatList(value) {
 
 
 function isInterviewComplete(application) {
-  return (
-    application.interview_completed === true ||
-    ["complete", "completed"].includes(String(application.interview_status || "").toLowerCase())
-  );
+  return isInterviewCompleted(application);
 }
 
 
@@ -653,11 +650,64 @@ function getNormalizedInterviewStatus(application) {
 
 
 function canRescheduleInterview(application) {
+  const scheduled = hasScheduledInterview(application);
+
   if (typeof application?.canReschedule === "boolean") {
-    return application.canReschedule;
+    return scheduled && application.canReschedule;
   }
 
-  return getNormalizedInterviewStatus(application) !== "complete";
+  if (typeof application?.can_reschedule === "boolean") {
+    return scheduled && application.can_reschedule;
+  }
+
+  return scheduled && !isInterviewCompleted(application);
+}
+
+
+function hasScheduledInterview(application) {
+  return Boolean(
+    application?.interviewId ||
+    application?.currentInterviewId ||
+    application?.active_attempt_id ||
+    application?.interviewLinkToken ||
+    getInterviewLink(application) ||
+    application?.linkGenerated ||
+    application?.interview_link_generated ||
+    application?.scheduledAt ||
+    application?.scheduled_at ||
+    application?.interview_scheduled_at ||
+    application?.configuredAt ||
+    application?.configured_at
+  );
+}
+
+
+function isInterviewCompleted(application) {
+  const status = String(
+    application?.interviewStatus ||
+    application?.interview_status ||
+    application?.status ||
+    application?.latestInterviewStatus ||
+    ""
+  ).toLowerCase();
+  const answeredCount = Number(
+    application?.answeredCount ??
+    application?.answered_count ??
+    application?.answersCount ??
+    application?.completedQuestions ??
+    0
+  ) || 0;
+  const totalQuestions = getTotalQuestionCount(application);
+
+  return (
+    application?.interview_completed === true ||
+    application?.interviewCompleted === true ||
+    ["complete", "completed"].includes(status) ||
+    Boolean(application?.completedAt) ||
+    Boolean(application?.completed_at) ||
+    Boolean(application?.interview_completed_at) ||
+    (totalQuestions > 0 && answeredCount >= totalQuestions)
+  );
 }
 
 

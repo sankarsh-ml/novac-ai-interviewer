@@ -3,7 +3,7 @@ import {
   clearQuestionBank as clearQuestionBankApi,
   deleteQuestion as deleteQuestionApi,
   filterQuestionBank,
-  fetchQuestionBank,
+  fetchQuestionBank as fetchQuestionBankApi,
   saveQuestionBank,
   updateQuestion as updateQuestionApi,
   uploadQuestionBank,
@@ -147,10 +147,10 @@ function QuestionBankPage({
     useState(null);
 
   useEffect(() => {
-    fetchQuestionBank();
+    loadQuestionBank();
   }, [job?.id]);
 
-  const fetchQuestionBank = async () => {
+  const loadQuestionBank = async () => {
     if (!job?.id) {
       return;
     }
@@ -158,8 +158,8 @@ function QuestionBankPage({
     setIsLoadingBank(true);
 
     try {
-      const data = await fetchQuestionBank(questionBankRepository, job.id);
-      setSavedQuestions(Array.isArray(data.questions) ? data.questions : []);
+      const data = await fetchQuestionBankApi(questionBankRepository, job.id);
+      setSavedQuestions(normalizeQuestionBankResponse(data));
     } catch (error) {
       console.error("Failed to fetch question bank:", error);
       setSavedQuestions([]);
@@ -235,7 +235,7 @@ function QuestionBankPage({
         setQuestions([]);
         setCount(0);
         setMode(null);
-        fetchQuestionBank();
+        loadQuestionBank();
 
       } catch (error) {
 
@@ -331,7 +331,7 @@ function QuestionBankPage({
       setSuccessMessage("Question updated successfully.");
       setEditingQuestionId("");
       setEditingQuestion(null);
-      fetchQuestionBank();
+      loadQuestionBank();
     } catch (error) {
       console.error(error);
       setSuccessMessage(error.message || "Failed to update question.");
@@ -353,7 +353,7 @@ function QuestionBankPage({
         setEditingQuestionId("");
         setEditingQuestion(null);
       }
-      fetchQuestionBank();
+      loadQuestionBank();
     } catch (error) {
       console.error(error);
       setSuccessMessage(error.message || "Failed to delete question.");
@@ -371,7 +371,7 @@ function QuestionBankPage({
       setSuccessMessage("Question bank cleared successfully.");
       setEditingQuestionId("");
       setEditingQuestion(null);
-      fetchQuestionBank();
+      loadQuestionBank();
     } catch (error) {
       console.error(error);
       setSuccessMessage(error.message || "Failed to clear question bank.");
@@ -875,4 +875,17 @@ function InstructionCard({ title, items }) {
 
 function getQuestionId(question) {
   return String(question?._id || question?.id || question?.question_id || "");
+}
+
+
+function normalizeQuestionBankResponse(data) {
+  const questions =
+    data?.questions ||
+    data?.questionBank ||
+    data?.question_bank ||
+    data?.items ||
+    data?.data ||
+    [];
+
+  return Array.isArray(questions) ? questions : [];
 }

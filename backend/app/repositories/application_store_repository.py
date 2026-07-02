@@ -413,7 +413,7 @@ def _mirror_related_records(application_id: str, updates: dict) -> None:
                 "completedAt": application.get("interview_completed_at") or application.get("completedAt"),
                 "updatedAt": now,
             },
-            generate_missing=True,
+            generate_missing=False,
         )
         update_document = {
             "$set": interview_values,

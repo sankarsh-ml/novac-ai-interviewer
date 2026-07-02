@@ -65,7 +65,7 @@ def get_job_question_bank(job_id: str):
 
 @router.get("/question-bank/questions")
 def get_question_bank_questions(
-    job_id: str,
+    job_id: str = "",
     difficulty: str = "all",
     area_of_interest: str = "all",
     search: str = "",
@@ -91,7 +91,7 @@ def get_question_bank_questions(
 
 
 @router.get("/question-bank/filters")
-def get_filters(job_id: str):
+def get_filters(job_id: str = ""):
     return {
         "success": True,
         "filters": get_question_bank_filters(job_id),
